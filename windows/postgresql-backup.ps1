@@ -1,4 +1,4 @@
-﻿param(
+﻿﻿param(
   [Parameter(Mandatory=$true)][string]$DatabaseUrl,
   [Parameter(Mandatory=$true)][string]$DestinationRoot,
   [int]$RetentionDays = 30
@@ -45,7 +45,7 @@ if (-not $pgDump) {
 New-Item -ItemType Directory -Path $DestinationRoot -Force | Out-Null
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $backup = Join-Path $DestinationRoot "operis-postgresql-$stamp.dump"
-$manifest = "$backup.sha256"
+$manifest = "$backup.manifest.json"
 
 $previousPassword = $env:PGPASSWORD
 try {
@@ -71,14 +71,26 @@ try {
 }
 
 $hash = (Get-FileHash $backup -Algorithm SHA256).Hash
-Set-Content -Path $manifest -Value $hash -Encoding ASCII
+$pgDumpVersion = (& $pgDump.Source --version | Out-String).Trim()
+$manifestObject = [PSCustomObject]@{
+  product = "OPERIS"
+  purpose = "POSTGRESQL_BACKUP"
+  createdAt = (Get-Date).ToUniversalTime().ToString("o")
+  database = $connection.Database
+  host = $connection.Host
+  port = $connection.Port
+  bytes = (Get-Item $backup).Length
+  sha256 = $hash
+  pgDumpVersion = $pgDumpVersion
+}
+$manifestObject | ConvertTo-Json -Depth 5 | Set-Content -Path $manifest -Encoding UTF8
 
 $cutoff = (Get-Date).AddDays(-[Math]::Max(1, $RetentionDays))
 Get-ChildItem $DestinationRoot -Filter "operis-postgresql-*.dump" -File |
   Where-Object { $_.LastWriteTime -lt $cutoff } |
   ForEach-Object {
     Remove-Item $_.FullName -Force
-    Remove-Item "$($_.FullName).sha256" -Force -ErrorAction SilentlyContinue
+    Remove-Item "$($_.FullName).manifest.json" -Force -ErrorAction SilentlyContinue
   }
 
 Write-Host "PostgreSQL backup PASS: $backup"

@@ -1,4 +1,4 @@
-﻿param(
+﻿﻿param(
   [Parameter(Mandatory=$true)][string]$InstallRoot,
   [Parameter(Mandatory=$true)][string]$DestinationRoot,
   [string]$DataRoot = ""
@@ -43,7 +43,16 @@ if (-not $generatedDb) {
 Copy-Item $generatedDb.FullName $dbBackup -Force
 
 if (Test-Path $envFile) {
-  Copy-Item $envFile (Join-Path $stage "server.env") -Force
+  $safeConfig = @{}
+  foreach ($line in Get-Content $envFile) {
+    if ($line -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=') {
+      $name = $Matches[1]
+      if ($name -notmatch '(?i)(PASSWORD|SECRET|TOKEN|KEY|DATABASE_URL|SMTP_USER|DOMAIN_USERNAME)') {
+        $safeConfig[$name] = "<present>"
+      }
+    }
+  }
+  $safeConfig | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $stage "server-config-presence.json") -Encoding UTF8
 }
 
 if (-not $DataRoot) {
@@ -69,6 +78,7 @@ $files = Get-ChildItem $stage -File -Recurse |
 $manifestObject = [PSCustomObject]@{
   product = "OPERIS"
   purpose = "PRE_POSTGRESQL_FULL_ROLLBACK_BACKUP"
+  secretsIncluded = $false
   createdAt = (Get-Date).ToUniversalTime().ToString("o")
   installRoot = $InstallRoot
   dataRoot = $DataRoot

@@ -1,0 +1,126 @@
+name: OPERIS Windows PostgreSQL Rehearsal Safety
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - postgresql-candidate-validation
+    paths:
+      - "windows/**"
+      - "server/scripts/backup-sqlite-before-postgresql.mjs"
+      - "server/prisma/**"
+      - ".github/workflows/operis-windows-postgresql-rehearsal.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  windows-precutover-backup:
+    name: Windows pre-cutover backup + verification
+    runs-on: windows-2022
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
+
+      - name: Parse all OPERIS PowerShell migration scripts
+        shell: pwsh
+        run: |
+          $errorsFound = @()
+          Get-ChildItem windows -Filter *.ps1 -File | ForEach-Object {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              $_.FullName,
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+
+            if ($errors.Count -gt 0) {
+              $errorsFound += $errors | ForEach-Object {
+                "$($_.Extent.File):$($_.Extent.StartLineNumber): $($_.Message)"
+              }
+            }
+          }
+
+          if ($errorsFound.Count -gt 0) {
+            $errorsFound | ForEach-Object { Write-Error $_ }
+            exit 1
+          }
+
+      - name: Install server dependencies
+        working-directory: server
+        shell: pwsh
+        run: npm.cmd ci
+
+      - name: Create synthetic SQLite rollback source
+        working-directory: server
+        shell: pwsh
+        env:
+          DATABASE_URL: file:./yaklasan-isler.db
+        run: |
+          Remove-Item prisma\yaklasan-isler.db -Force -ErrorAction SilentlyContinue
+          npx.cmd prisma generate --schema prisma/schema.sqlite.prisma
+          npx.cmd prisma db push --schema prisma/schema.sqlite.prisma --skip-generate
+          if (-not (Test-Path prisma\yaklasan-isler.db)) {
+            throw "Synthetic SQLite DB oluşturulamadı."
+          }
+
+      - name: Run full pre-PostgreSQL backup on Windows
+        shell: pwsh
+        run: |
+          $dest = Join-Path $env:RUNNER_TEMP "operis-prepg-backups"
+          .\windows\pre-postgresql-full-backup.ps1 `
+            -InstallRoot $env:GITHUB_WORKSPACE `
+            -DestinationRoot $dest
+
+          $zip = Get-ChildItem $dest -Filter "pre-postgresql-*.zip" -File |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+
+          if (-not $zip) {
+            throw "Pre-PostgreSQL backup ZIP bulunamadı."
+          }
+
+          "OPERIS_PREPG_ZIP=$($zip.FullName)" |
+            Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Verify full pre-PostgreSQL backup
+        shell: pwsh
+        run: |
+          .\windows\verify-pre-postgresql-full-backup.ps1 `
+            -BackupZip $env:OPERIS_PREPG_ZIP
+
+      - name: Prove backup does not contain raw server.env
+        shell: pwsh
+        run: |
+          $temp = Join-Path $env:RUNNER_TEMP "operis-prepg-inspect"
+          Remove-Item $temp -Recurse -Force -ErrorAction SilentlyContinue
+          Expand-Archive $env:OPERIS_PREPG_ZIP $temp -Force
+
+          if (Test-Path (Join-Path $temp "server.env")) {
+            throw "Güvenlik hatası: raw server.env backup ZIP içinde."
+          }
+
+          if (-not (Test-Path (Join-Path $temp "yaklasan-isler.db"))) {
+            throw "Rollback DB backup ZIP içinde yok."
+          }
+
+          if (-not (Test-Path (Join-Path $temp "schema.sqlite.prisma"))) {
+            throw "SQLite schema backup ZIP içinde yok."
+          }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: operis-windows-prepostgresql-backup-evidence
+          path: ${{ env.OPERIS_PREPG_ZIP }}
+          if-no-files-found: warn

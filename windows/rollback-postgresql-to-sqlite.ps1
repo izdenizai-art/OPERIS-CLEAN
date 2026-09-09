@@ -1,4 +1,4 @@
-﻿param(
+﻿﻿param(
   [Parameter(Mandatory=$true)][string]$InstallRoot,
   [Parameter(Mandatory=$true)][string]$BackupDb,
   [Parameter(Mandatory=$true)][ValidateSet("YES")][string]$ConfirmRestore
@@ -40,7 +40,7 @@ Set-Content -Path $envFile -Value $envLines -Encoding UTF8
 
 Push-Location $serverRoot
 try {
-  npm run prisma:generate
+  npm.cmd run prisma:generate
 } finally {
   Pop-Location
 }

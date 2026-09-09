@@ -1,4 +1,4 @@
-﻿param(
+﻿﻿param(
   [Parameter(Mandatory=$true)][string]$DatabaseUrl,
   [Parameter(Mandatory=$true)][string]$BackupFile,
   [Parameter(Mandatory=$true)][ValidateSet("YES")][string]$ConfirmRestore
@@ -46,13 +46,18 @@ if (-not $pgRestore) {
   throw "pg_restore bulunamadı. PostgreSQL client tools kurulmalıdır."
 }
 
-$hashFile = "$BackupFile.sha256"
-if (Test-Path $hashFile) {
-  $expected = (Get-Content $hashFile -Raw).Trim()
-  $actual = (Get-FileHash $BackupFile -Algorithm SHA256).Hash
-  if ($expected -ne $actual) {
-    throw "Backup SHA256 doğrulaması başarısız."
-  }
+$manifestFile = "$BackupFile.manifest.json"
+if (-not (Test-Path $manifestFile)) {
+  throw "Backup manifesti bulunamadı: $manifestFile"
+}
+$manifest = Get-Content $manifestFile -Raw | ConvertFrom-Json
+if ($manifest.product -ne "OPERIS" -or $manifest.purpose -ne "POSTGRESQL_BACKUP") {
+  throw "Geçersiz PostgreSQL backup manifesti."
+}
+$expected = [string]$manifest.sha256
+$actual = (Get-FileHash $BackupFile -Algorithm SHA256).Hash
+if (-not $expected -or $expected -ne $actual) {
+  throw "Backup SHA256 doğrulaması başarısız."
 }
 
 $previousPassword = $env:PGPASSWORD
