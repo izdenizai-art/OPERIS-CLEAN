@@ -1,0 +1,49 @@
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${OPERIS_POSTGRES_DB:-operis}
+      POSTGRES_USER: ${OPERIS_POSTGRES_USER:-operis}
+      POSTGRES_PASSWORD: ${OPERIS_POSTGRES_PASSWORD:?OPERIS_POSTGRES_PASSWORD zorunludur}
+    volumes:
+      - operis_postgresql_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${OPERIS_POSTGRES_USER:-operis} -d ${OPERIS_POSTGRES_DB:-operis}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - operis_internal
+
+  operis:
+    build:
+      context: .
+      dockerfile: Dockerfile.postgresql
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${OPERIS_PORT:-3001}:3001"
+    environment:
+      DATABASE_URL: ${OPERIS_POSTGRES_DATABASE_URL:?OPERIS_POSTGRES_DATABASE_URL zorunludur; parola URL-encode edilmelidir}
+      OPERIS_DATA_DIR: /data
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET zorunludur}
+      DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:?DATA_ENCRYPTION_KEY zorunludur}
+      CLIENT_ORIGIN: ${CLIENT_ORIGIN:-http://127.0.0.1:3001}
+      PUBLIC_URL: ${PUBLIC_URL:-http://127.0.0.1:3001}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      PORT: 3001
+      BIND_HOST: 0.0.0.0
+    volumes:
+      - operis_app_data:/data
+    networks:
+      - operis_internal
+
+volumes:
+  operis_postgresql_data:
+  operis_app_data:
+
+networks:
+  operis_internal:
