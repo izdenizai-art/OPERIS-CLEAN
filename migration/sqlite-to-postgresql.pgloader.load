@@ -1,0 +1,13 @@
+load database
+  from '{{OPERIS_SQLITE_SOURCE_URL}}'
+  into '{{OPERIS_POSTGRES_URL}}'
+
+with
+  data only,
+  create no tables,
+  create no indexes,
+  no truncate,
+  quote identifiers,
+  reset no sequences,
+  encoding 'utf-8'
+;
