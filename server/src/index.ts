@@ -568,15 +568,37 @@ app.delete('/api/admin/record-locks/:id/force', requireAuth, requirePermission((
   res.status(204).end();
 });
 
-app.get('/api/health', (req, res) => res.json({
-  ok: true,
-  version: CURRENT_VERSION,
-  protocol: req.protocol,
-  host: req.get('host') ?? '',
-  origin: req.get('origin') ?? '',
-  listeningOn: `0.0.0.0:${port}`,
-  allowedOrigins: [...operisAllowedOrigins()],
-}));
+function currentDatabaseProvider(): 'sqlite' | 'postgresql' | 'unknown' {
+  const databaseUrl = String(process.env.DATABASE_URL ?? '').trim().toLowerCase();
+  if (databaseUrl.startsWith('file:')) return 'sqlite';
+  if (databaseUrl.startsWith('postgresql:') || databaseUrl.startsWith('postgres:')) return 'postgresql';
+  return 'unknown';
+}
+
+app.get('/api/health', async (req, res) => {
+  const databaseProvider = currentDatabaseProvider();
+  try {
+    await prisma.$queryRawUnsafe('SELECT 1');
+    res.json({
+      ok: true,
+      version: CURRENT_VERSION,
+      protocol: req.protocol,
+      host: req.get('host') ?? '',
+      origin: req.get('origin') ?? '',
+      listeningOn: `0.0.0.0:${port}`,
+      allowedOrigins: [...operisAllowedOrigins()],
+      database: { provider: databaseProvider, connected: true },
+    });
+  } catch (error) {
+    console.error('[DATABASE HEALTH]', error);
+    res.status(503).json({
+      ok: false,
+      version: CURRENT_VERSION,
+      code: 'DATABASE_UNAVAILABLE',
+      database: { provider: databaseProvider, connected: false },
+    });
+  }
+});
 
 app.get('/api/version-info', (_req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
@@ -2111,6 +2133,7 @@ function runPowerShell(scriptPath: string, args: string[]): Promise<void> {
 }
 
 app.post('/api/admin/backup/apply-schedule', requireAuth, adminOnly, async (_req, res) => {
+  if (!ensureSqliteFileBackupProvider(res)) return;
   if (process.platform !== 'win32') {
     res.status(400).json({ error: 'Zamanlanmış görev yalnızca Windows üzerinde uygulanabilir.' });
     return;
@@ -2181,6 +2204,19 @@ setInterval(() => {
 
 
 
+function ensureSqliteFileBackupProvider(res: Response): boolean {
+  const provider = currentDatabaseProvider();
+  if (provider === 'sqlite') return true;
+  res.status(409).json({
+    error: provider === 'postgresql'
+      ? 'Bu kurulum PostgreSQL kullanıyor. SQLite dosya yedeği/restore akışı çalıştırılmadı; PostgreSQL için pg_dump/pg_restore yedekleme akışını kullanın.'
+      : 'Veritabanı sağlayıcısı tanınamadı; dosya tabanlı backup işlemi güvenlik nedeniyle durduruldu.',
+    code: provider === 'postgresql' ? 'POSTGRESQL_BACKUP_PROVIDER' : 'DATABASE_PROVIDER_UNKNOWN',
+    provider,
+  });
+  return false;
+}
+
 function databaseFilePath(): string {
   const databaseUrl = String(process.env.DATABASE_URL ?? '').trim();
   if (databaseUrl.startsWith('file:')) {
@@ -2221,6 +2257,7 @@ function helpDeskAttachmentManifest(): BackupAttachmentManifestItem[] {
 }
 
 app.get('/api/admin/backup', requireAuth, adminOnly, async (_req, res) => {
+  if (!ensureSqliteFileBackupProvider(res)) return;
   const dbFile = databaseFilePath();
   const envFile = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../.env');
   if (!fs.existsSync(dbFile)) {
@@ -2289,6 +2326,7 @@ function compareReleaseVersions(left: string, right: string): number | null {
 }
 
 app.post('/api/admin/restore', requireAuth, adminOnly, backupUpload.single('backup'), async (req: AuthRequest, res) => {
+  if (!ensureSqliteFileBackupProvider(res)) return;
   if (!req.file?.buffer) {
     res.status(400).json({ error: 'ZIP yedek dosyası seçilmedi.' });
     return;
