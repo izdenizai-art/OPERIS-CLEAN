@@ -1,0 +1,102 @@
+name: OPERIS PostgreSQL Candidate Validation
+
+on:
+  push:
+    branches:
+      - postgresql-candidate-validation
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: operis-postgresql-candidate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-postgresql-candidate:
+    name: Validate PostgreSQL candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: operis_ci
+          POSTGRES_USER: operis
+          POSTGRES_PASSWORD: operis_ci_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U operis -d operis_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      DATABASE_URL: postgresql://operis:operis_ci_password@localhost:5432/operis_ci?schema=public
+      JWT_SECRET: ci-only-jwt-secret-not-for-production-00000000000000000000000000000000
+      DATA_ENCRYPTION_KEY: MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=
+      NODE_ENV: test
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install server dependencies
+        run: npm ci
+        working-directory: server
+
+      - name: Validate PostgreSQL Prisma schema
+        run: npx prisma validate --schema prisma/schema.postgresql.prisma
+        working-directory: server
+
+      - name: Generate PostgreSQL Prisma Client
+        run: npx prisma generate --schema prisma/schema.postgresql.prisma
+        working-directory: server
+
+      - name: Generate reviewable initial migration SQL
+        run: |
+          mkdir -p ../migration/generated
+          npx prisma migrate diff \
+            --from-empty \
+            --to-schema-datamodel prisma/schema.postgresql.prisma \
+            --script > ../migration/generated/000000000000_postgresql_init.sql
+          test -s ../migration/generated/000000000000_postgresql_init.sql
+        working-directory: server
+
+      - name: Apply candidate schema to PostgreSQL
+        run: npx prisma db push --schema prisma/schema.postgresql.prisma --skip-generate
+        working-directory: server
+
+      - name: Verify PostgreSQL tables exist
+        env:
+          PGPASSWORD: operis_ci_password
+        run: |
+          table_count="$(psql -h localhost -U operis -d operis_ci -Atqc "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';")"
+          echo "public table count: $table_count"
+          test "$table_count" -gt 0
+
+      - name: Build frontend and server
+        run: npm run build
+
+      - name: Upload initial migration SQL
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: operis-postgresql-initial-migration-sql
+          path: migration/generated/000000000000_postgresql_init.sql
+          if-no-files-found: error
