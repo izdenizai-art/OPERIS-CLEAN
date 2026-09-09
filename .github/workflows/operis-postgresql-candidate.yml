@@ -114,9 +114,15 @@ jobs:
           psql -v ON_ERROR_STOP=1 -h localhost -U operis -d operis_ci \
             -f migration/generated/000000000000_postgresql_init.sql
 
+      - name: Normalize Prisma SQLite timestamps
+        env:
+          OPERIS_SQLITE_FILE: ${{ github.workspace }}/server/prisma/migration-smoke.db
+          OPERIS_SQLITE_NORMALIZED_FILE: ${{ runner.temp }}/migration-smoke-normalized.db
+        run: bash migration/normalize-prisma-sqlite-datetimes.sh
+
       - name: Migrate synthetic SQLite data with pgloader
         run: |
-          sqlite_file="$GITHUB_WORKSPACE/server/prisma/migration-smoke.db"
+          sqlite_file="$RUNNER_TEMP/migration-smoke-normalized.db"
           load_file="$RUNNER_TEMP/sqlite-to-postgresql.load"
           sed \
             -e "s|{{OPERIS_SQLITE_SOURCE_URL}}|sqlite://$sqlite_file|g" \
