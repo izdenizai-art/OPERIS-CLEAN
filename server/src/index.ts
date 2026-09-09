@@ -2204,7 +2204,7 @@ setInterval(() => {
 
 
 
-function ensureSqliteFileBackupProvider(res: Response): boolean {
+function ensureSqliteFileBackupProvider(res: express.Response): boolean {
   const provider = currentDatabaseProvider();
   if (provider === 'sqlite') return true;
   res.status(409).json({
