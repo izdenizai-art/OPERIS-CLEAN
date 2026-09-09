@@ -1,0 +1,1008 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  username     String   @unique
+  displayName  String
+  email        String?  @unique
+  department   String   @default("")
+  title        String   @default("")
+  directoryGroups Json?
+  directoryUserPrincipalName String @default("")
+  theme        String   @default("dark")
+  passwordHash String
+  permissions  Json?
+  active       Boolean  @default(true)
+  isAdmin      Boolean  @default(false)
+  mustChangePassword Boolean @default(false)
+  directorySource String @default("")
+  directoryEnabled Boolean @default(true)
+  directoryObjectGuid String @default("")
+  directoryLastSyncAt DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  lastSeenVersion String @default("")
+  resetTokens  PasswordResetToken[]
+  sentMessages  Message[] @relation("SentMessages")
+  receivedMessages Message[] @relation("ReceivedMessages")
+  notes UserNote[]
+  sessions UserSession[]
+  sentAnnouncements Announcement[] @relation("SentAnnouncements")
+  announcementReceipts AnnouncementReceipt[]
+  branchMemberships UserBranch[]
+}
+
+
+model UserSession {
+  id           String   @id @default(uuid())
+  userId       String
+  tokenId      String   @unique
+  deviceName   String   @default("")
+  deviceType   String   @default("")
+  browser      String   @default("")
+  operatingSystem String @default("")
+  ipAddress    String   @default("")
+  macAddress   String   @default("")
+  userAgent    String   @default("")
+  createdAt    DateTime @default(now())
+  lastSeenAt   DateTime @default(now())
+  revokedAt    DateTime?
+  revokedById  String   @default("")
+  revokeReason String   @default("")
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, lastSeenAt])
+  @@index([revokedAt, lastSeenAt])
+}
+
+model UserNote {
+  branchCode   String   @default("100")
+  id        String   @id @default(uuid())
+  userId    String
+  title     String   @default("")
+  content   String
+  color     String   @default("yellow")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, updatedAt])
+
+  @@index([branchCode])
+}
+
+model Message {
+  branchCode   String   @default("100")
+  id          String   @id @default(uuid())
+  senderId    String
+  recipientId String
+  subject     String   @default("")
+  body        String
+  readAt      DateTime?
+  createdAt   DateTime @default(now())
+  sender      User     @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+  recipient   User     @relation("ReceivedMessages", fields: [recipientId], references: [id], onDelete: Cascade)
+
+  @@index([senderId, createdAt])
+  @@index([recipientId, readAt, createdAt])
+
+  @@index([branchCode])
+}
+
+
+
+model Announcement {
+  branchCode   String   @default("100")
+  id           String   @id @default(uuid())
+  senderId     String
+  senderName   String
+  senderDepartment String @default("")
+  title        String
+  body         String
+  priority     String   @default("NORMAL")
+  audienceType String
+  audienceValue String @default("")
+  active       Boolean  @default(true)
+  startsAt     DateTime @default(now())
+  endsAt       DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  sender       User     @relation("SentAnnouncements", fields: [senderId], references: [id], onDelete: Cascade)
+  receipts     AnnouncementReceipt[]
+
+  @@index([active, startsAt, endsAt])
+  @@index([senderId, createdAt])
+
+  @@index([branchCode])
+}
+
+model AnnouncementReceipt {
+  id                 String   @id @default(uuid())
+  announcementId     String
+  userId             String
+  seenAt             DateTime?
+  dismissedAt        DateTime?
+  dontShowAgainAt    DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  announcement       Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  user               User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([announcementId, userId])
+  @@index([userId, dontShowAgainAt, dismissedAt])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  tokenHash String   @unique
+  userId    String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model SentReminder {
+  id        String   @id @default(uuid())
+  taskId    String
+  userId    String
+  reminderKey String @unique
+  sentAt    DateTime @default(now())
+
+  @@index([taskId])
+  @@index([userId])
+}
+
+model Task {
+  branchCode   String   @default("100")
+  id          String   @id
+  title       String
+  description String   @default("")
+  date        String
+  time        String
+  priority    String
+  completed   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+  deletedById String   @default("")
+  deletedByName String @default("")
+
+  @@index([branchCode])
+}
+
+model Credential {
+  branchCode   String   @default("100")
+  id                 String   @id
+  groupNameEncrypted String
+  usernameEncrypted  String
+  passwordEncrypted  String
+  ipEncrypted        String
+  descriptionEncrypted String
+  lastChanged        DateTime
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  deletedAt          DateTime?
+  deletedById        String   @default("")
+  deletedByName      String   @default("")
+
+  @@index([branchCode])
+}
+
+model TrackingRecord {
+  branchCode   String   @default("100")
+  id            String   @id
+  groupName     String
+  serviceDate   String
+  serviceNumber String
+  serviceLocation String
+  description   String   @default("")
+  replacedPart1 String   @default("")
+  replacedPart2 String   @default("")
+  replacedPart3 String   @default("")
+  note          String   @default("")
+  pinned        Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  deletedAt     DateTime?
+  deletedById   String   @default("")
+  deletedByName String   @default("")
+
+  @@index([branchCode])
+}
+
+model RecordLock {
+  id          String   @id @default(uuid())
+  module      String
+  recordId    String
+  userId      String
+  username    String
+  displayName String
+  acquiredAt  DateTime @default(now())
+  expiresAt   DateTime
+  updatedAt   DateTime @updatedAt
+
+  @@unique([module, recordId])
+  @@index([expiresAt])
+  @@index([userId])
+}
+
+model AuditLog {
+  branchCode   String   @default("100")
+  id          String   @id @default(uuid())
+  userId      String   @default("")
+  username    String   @default("")
+  displayName String   @default("")
+  action      String
+  module      String
+  recordId    String   @default("")
+  recordLabel String   @default("")
+  description String   @default("")
+  oldData     String   @default("")
+  newData     String   @default("")
+  ipAddress   String   @default("")
+  userAgent   String   @default("")
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([module, action])
+  @@index([userId, createdAt])
+}
+
+model AppSettings {
+  id                  Int      @id @default(1)
+  notifyMinutesBefore Int      @default(15)
+  shakeEnabled        Boolean  @default(true)
+  soundEnabled        Boolean  @default(true)
+  theme               String   @default("dark")
+  smtpEnabled         Boolean  @default(false)
+  smtpHost            String   @default("")
+  smtpPort            Int      @default(587)
+  smtpSecure          Boolean  @default(false)
+  smtpUser            String   @default("")
+  smtpPasswordEncrypted String @default("")
+  smtpFrom            String   @default("")
+  mailProvider         String   @default("smtp")
+  graphEnabled         Boolean  @default(false)
+  graphTenantId        String   @default("")
+  graphClientId        String   @default("")
+  graphClientSecretEncrypted String @default("")
+  graphSenderUser      String   @default("")
+  reminderEmailEnabled Boolean @default(false)
+  reminderLeadMinutes Int      @default(60)
+  companyName         String   @default("")
+  companyLogoDataUrl  String   @default("")
+  quickLinksJson      String   @default("")
+  networkBackupEnabled Boolean @default(false)
+  networkBackupPath   String   @default("")
+  backupScheduleEnabled Boolean @default(false)
+  backupScheduleType  String   @default("daily")
+  backupScheduleTime  String   @default("22:00")
+  backupScheduleDay   Int      @default(1)
+  backupRetentionDays Int      @default(30)
+  domainSyncEnabled Boolean @default(false)
+  domainController String @default("")
+  domainUseLdaps Boolean @default(true)
+  domainPort Int @default(636)
+  domainBaseDn String @default("")
+  domainUsername String @default("")
+  domainPasswordEncrypted String @default("")
+  domainSyncIntervalMinutes Int @default(60)
+  domainLastSyncAt DateTime?
+  domainLastSyncResult String @default("")
+  remoteAccessMode String @default("ALL_ALLOWED")
+  licenseExpiresAt   DateTime?
+  updatedAt           DateTime @updatedAt
+}
+
+
+model Asset {
+  branchCode   String   @default("100")
+  id             String   @id @default(uuid())
+  assetCode      String   @unique
+  externalSource String   @default("MANUAL")
+  externalId     String   @default("")
+  name           String
+  category       String   @default("")
+  brand          String   @default("")
+  model          String   @default("")
+  serialNumber   String   @default("")
+  barcode        String   @default("")
+  qrTokenHash    String   @default("")
+  status         String   @default("ACTIVE")
+  quantity       Int      @default(1)
+  description    String   @default("")
+  currentTargetType String @default("")
+  currentTargetId   String @default("")
+  currentTargetName String @default("")
+  unitId         String   @default("")
+  locationId     String   @default("")
+  purchaseDate   String   @default("")
+  warrantyEndDate String  @default("")
+
+  sourceSirketKodu String   @default("")
+  sourceBitisYili String   @default("")
+  sourceAlisBelgeNo String @default("")
+  sourceSatici String      @default("")
+  sourceResBelgeNo String  @default("")
+  sourceGrupKodu String    @default("")
+  sourceSatisTarihi String @default("")
+  sourceFingerprint String @default("")
+  sourceSyncedAt DateTime?
+  sourceChangedAt DateTime?
+  createdById    String   @default("")
+  createdByName  String   @default("")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  deletedAt      DateTime?
+
+  @@index([serialNumber])
+  @@index([barcode])
+  @@index([externalSource, externalId])
+  @@index([currentTargetType, currentTargetId])
+  @@index([locationId])
+  @@index([unitId])
+
+  @@index([branchCode])
+}
+
+model AssetParty {
+  branchCode   String   @default("100")
+  id             String   @id @default(uuid())
+  type           String
+  code           String
+  name           String
+  parentId       String   @default("")
+  externalSource String   @default("MANUAL")
+  externalId     String   @default("")
+  department     String   @default("")
+  title          String   @default("")
+  email          String   @default("")
+  active         Boolean  @default(true)
+  qrTokenHash    String   @default("")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([type, code])
+  @@index([type, parentId])
+  @@index([externalSource, externalId])
+
+  @@index([branchCode])
+}
+
+model AssetAssignment {
+  branchCode   String   @default("100")
+  id             String   @id @default(uuid())
+  documentNo     String   @unique
+  assetId        String
+  targetType     String
+  targetId       String
+  targetName     String
+  unitId         String   @default("")
+  locationId     String   @default("")
+  startAt        DateTime @default(now())
+  endAt          DateTime?
+  status         String   @default("ACTIVE")
+  note           String   @default("")
+  documentQrHash String   @default("")
+  createdById    String   @default("")
+  createdByName  String   @default("")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([assetId, status])
+  @@index([targetType, targetId, status])
+  @@index([documentNo])
+
+  @@index([branchCode])
+}
+
+model AssetMovement {
+  branchCode   String   @default("100")
+  id          String   @id @default(uuid())
+  assetId     String
+  action      String
+  documentNo  String   @default("")
+  fromType    String   @default("")
+  fromId      String   @default("")
+  fromName    String   @default("")
+  toType      String   @default("")
+  toId        String   @default("")
+  toName      String   @default("")
+  note        String   @default("")
+  userId      String   @default("")
+  userName    String   @default("")
+  createdAt   DateTime @default(now())
+
+  @@index([assetId, createdAt])
+  @@index([toType, toId, createdAt])
+  @@index([documentNo])
+
+  @@index([branchCode])
+}
+
+model AssetCount {
+  branchCode   String   @default("100")
+  id             String   @id @default(uuid())
+  countNo        String   @unique
+  name           String
+  locationId     String
+  locationName   String
+  status         String   @default("OPEN")
+  startedAt      DateTime @default(now())
+  completedAt    DateTime?
+  createdById    String   @default("")
+  createdByName  String   @default("")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([locationId, status])
+
+  @@index([branchCode])
+}
+
+model AssetCountScan {
+  branchCode   String   @default("100")
+  id          String   @id @default(uuid())
+  countId     String
+  assetId     String
+  scannedCode String
+  locationId  String
+  result      String
+  note        String   @default("")
+  scannedById String   @default("")
+  scannedByName String @default("")
+  scannedAt   DateTime @default(now())
+
+  @@unique([countId, assetId])
+  @@index([countId, result])
+}
+
+model AssetQrToken {
+  branchCode   String   @default("100")
+  id          String   @id @default(uuid())
+  tokenHash   String   @unique
+  entityType  String
+  entityId    String
+  active      Boolean  @default(true)
+  version     Int      @default(1)
+  createdById String   @default("")
+  createdAt   DateTime @default(now())
+  revokedAt   DateTime?
+
+  @@index([entityType, entityId, active])
+}
+
+model AssetLabelTemplate {
+  branchCode   String   @default("100")
+  id          String   @id @default(uuid())
+  name        String
+  widthMm     Float    @default(50)
+  heightMm    Float    @default(25)
+  printerLanguage String @default("WINDOWS")
+  layoutJson  String
+  isDefault   Boolean  @default(false)
+  createdById String   @default("")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([branchCode])
+}
+
+model AssetExternalConnection {
+  branchCode       String   @default("100")
+  branchVisibility String   @default("BRANCH")
+  id          String   @id @default(uuid())
+  name        String
+  type        String
+  host        String
+  port        Int      @default(1433)
+  database    String
+  username    String
+  passwordEncrypted String
+  queryText   String   @default("")
+  purpose     String
+  enabled     Boolean  @default(false)
+  lastTestAt  DateTime?
+  lastTestResult String @default("")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+
+
+model AssetSaleExternal {
+  branchCode       String   @default("100")
+  id               String   @id @default(uuid())
+  connectionId     String
+  sourceKey        String
+  sourceFingerprint String
+  sourceChangedAt  DateTime?
+  sourceSyncedAt   DateTime?
+  sirketKodu       String   @default("")
+  demirKodu        String
+  tarih            String   @default("")
+  belgeNo          String   @default("")
+  alici             String   @default("")
+  satisMiktari     Float    @default(0)
+  aciklama         String   @default("")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([connectionId, sourceKey])
+  @@index([branchCode, demirKodu])
+  @@index([sourceChangedAt])
+}
+
+model NetworkTopologyWorkspace {
+  branchCode    String   @default("100")
+  id            String   @id @default(uuid())
+  name          String
+  description   String   @default("")
+  layoutJson    String   @default("{\"nodes\":[],\"links\":[],\"settings\":{}}")
+  createdById   String   @default("")
+  createdByName String   @default("")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([branchCode, name])
+  @@index([branchCode, updatedAt])
+}
+
+model NetworkMonitor {
+  branchCode   String   @default("100")
+  id                   String   @id @default(uuid())
+  name                 String
+  host                 String
+  description          String   @default("")
+  deviceType           String   @default("UNKNOWN")
+  vendor               String   @default("")
+  location             String   @default("")
+  operatingSystem      String   @default("UNKNOWN")
+  snmpEnabled          Boolean  @default(false)
+  snmpVersion          String   @default("2c")
+  snmpPort             Int      @default(161)
+  snmpCommunityEncrypted String @default("")
+  snmpUsername         String   @default("")
+  snmpAuthProtocol     String   @default("SHA")
+  snmpAuthKeyEncrypted String   @default("")
+  snmpPrivProtocol     String   @default("AES")
+  snmpPrivKeyEncrypted String   @default("")
+  intervalSeconds      Int      @default(60)
+  failureThreshold     Int      @default(3)
+  timeoutMs            Int      @default(2000)
+  emailTo              String   @default("")
+  downSubject          String   @default("[Operis] {name} - ERİŞİM YOK")
+  downBody             String   @default("{name} ({host}) adresine erişim sağlanamıyor. Ardışık başarısız ping: {failures}. Zaman: {time}")
+  upSubject            String   @default("[Operis] {name} - ERİŞİM VAR")
+  upBody               String   @default("{name} ({host}) adresine erişim yeniden sağlandı. Gecikme: {latency} ms. Zaman: {time}")
+  active               Boolean  @default(true)
+  status               String   @default("UNKNOWN")
+  consecutiveFailures  Int      @default(0)
+  lastLatencyMs        Int?
+  lastCheckedAt        DateTime?
+  lastSuccessAt        DateTime?
+  lastFailureAt        DateTime?
+  lastNotifiedStatus   String   @default("")
+  positionX            Int      @default(20)
+  positionY            Int      @default(20)
+  createdById          String   @default("")
+  createdByName        String   @default("")
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  events               NetworkMonitorEvent[]
+  services             NetworkService[]
+  snmpSamples          NetworkSnmpSample[]
+  interfaceSamples     NetworkInterfaceSample[]
+
+  @@unique([branchCode, host])
+  @@index([active, lastCheckedAt])
+  @@index([status, updatedAt])
+
+  @@index([branchCode])
+}
+
+model NetworkSnmpSample {
+  branchCode       String   @default("100")
+  id               String   @id @default(uuid())
+  monitorId        String
+  sysName          String   @default("")
+  sysDescr         String   @default("")
+  sysLocation      String   @default("")
+  sysContact       String   @default("")
+  sysUptimeTicks   BigInt?
+  cpuPercent       Float?
+  memoryPercent    Float?
+  diskPercent      Float?
+  createdAt        DateTime @default(now())
+  monitor          NetworkMonitor @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+
+  @@index([monitorId, createdAt])
+  @@index([branchCode, createdAt])
+}
+
+model NetworkInterfaceSample {
+  branchCode       String   @default("100")
+  id               String   @id @default(uuid())
+  monitorId        String
+  interfaceIndex   Int
+  interfaceName    String
+  adminStatus      Int?
+  operStatus       Int?
+  speedBps         BigInt?
+  inOctets         BigInt?
+  outOctets        BigInt?
+  inBps            Float?
+  outBps           Float?
+  createdAt        DateTime @default(now())
+  monitor          NetworkMonitor @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+
+  @@index([monitorId, interfaceIndex, createdAt])
+  @@index([branchCode, createdAt])
+}
+
+model NetworkService {
+  branchCode      String   @default("100")
+  id              String   @id @default(uuid())
+  monitorId       String
+  name            String
+  protocol        String   @default("TCP")
+  port            Int
+  path            String   @default("")
+  expectedStatus  Int?
+  timeoutMs       Int      @default(3000)
+  active          Boolean  @default(true)
+  status          String   @default("UNKNOWN")
+  consecutiveFailures Int  @default(0)
+  lastLatencyMs   Int?
+  lastCheckedAt   DateTime?
+  lastSuccessAt   DateTime?
+  lastFailureAt   DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  monitor         NetworkMonitor @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+  samples         NetworkServiceSample[]
+
+  @@index([monitorId, active])
+  @@index([branchCode, status])
+  @@unique([monitorId, protocol, port, path])
+}
+
+model NetworkServiceSample {
+  branchCode   String   @default("100")
+  id           String   @id @default(uuid())
+  serviceId    String
+  success      Boolean
+  latencyMs    Int?
+  responseCode Int?
+  message      String   @default("")
+  createdAt    DateTime @default(now())
+  service      NetworkService @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@index([serviceId, createdAt])
+  @@index([branchCode, createdAt])
+}
+
+model NetworkMonitorEvent {
+  branchCode   String   @default("100")
+  id          String   @id @default(uuid())
+  monitorId   String
+  status      String
+  success     Boolean
+  latencyMs   Int?
+  message     String   @default("")
+  createdAt   DateTime @default(now())
+  monitor     NetworkMonitor @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+
+  @@index([monitorId, createdAt])
+}
+
+
+model Branch {
+  code          String   @id
+  name          String
+  isHeadOffice  Boolean  @default(false)
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  memberships   UserBranch[]
+
+  @@index([active, name])
+}
+
+model UserBranch {
+  id           String   @id @default(uuid())
+  userId       String
+  branchCode   String
+  isPrimary    Boolean  @default(false)
+  permissions  Json?
+  assignedById String   @default("")
+  assignedAt   DateTime @default(now())
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  branch       Branch   @relation(fields: [branchCode], references: [code], onDelete: Cascade)
+
+  @@unique([userId, branchCode])
+  @@index([branchCode, userId])
+}
+
+
+model SystemMigration {
+  key       String   @id
+  appliedAt DateTime @default(now())
+  note      String   @default("")
+}
+
+
+model HelpDeskGlobalSetting {
+  id                Int      @id @default(1)
+  maxAttachments    Int      @default(5)
+  maxAttachmentMb   Int      @default(10)
+  allowedExtensions String   @default("pdf,doc,docx,xls,xlsx,ppt,pptx,txt,csv,jpg,jpeg,png,gif,zip,rar,7z")
+  updatedAt         DateTime @updatedAt
+}
+
+model HelpDeskBranchSetting {
+  branchCode         String   @id
+  enabled            Boolean  @default(true)
+  title              String   @default("")
+  welcomeText        String   @default("")
+  emailSubjectPrefix String   @default("")
+  allowAttachments   Boolean  @default(true)
+  maxAttachmentMb    Int      @default(10)
+  knowledgeEnabled   Boolean  @default(true)
+  showRecentTickets  Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+model HelpDeskAccess {
+  id               String   @id @default(uuid())
+  userId           String
+  branchCode       String
+  active           Boolean  @default(true)
+  canOpen          Boolean  @default(false)
+  canStaff         Boolean  @default(false)
+  canCoordinate    Boolean  @default(false)
+  canRespond       Boolean  @default(false)
+  canChangeStatus  Boolean  @default(false)
+  canReopen        Boolean  @default(false)
+  canViewAll       Boolean  @default(false)
+  canAssign        Boolean  @default(false)
+  canClose         Boolean  @default(false)
+  canReport        Boolean  @default(false)
+  canTopics        Boolean  @default(false)
+  canCannedReplies Boolean  @default(false)
+  canKnowledge     Boolean  @default(false)
+  mutedEmail       Boolean  @default(false)
+  assignedById     String   @default("")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([userId, branchCode])
+  @@index([branchCode, active, canStaff])
+  @@index([userId, active, canOpen])
+}
+
+model HelpDeskCategory {
+  id          String   @id @default(uuid())
+  branchCode  String
+  name        String
+  description String   @default("")
+  active      Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([branchCode, name])
+  @@index([branchCode, active, sortOrder])
+}
+
+model HelpDeskCategoryAssignee {
+  id         String   @id @default(uuid())
+  branchCode String
+  categoryId String
+  userId     String
+  userName   String
+  createdAt  DateTime @default(now())
+
+  @@unique([categoryId, userId])
+  @@index([branchCode, categoryId])
+  @@index([userId, branchCode])
+}
+
+
+model HelpDeskPriority {
+  id                   String   @id @default(uuid())
+  branchCode           String
+  name                 String
+  color                String   @default("#38bdf8")
+  level                Int      @default(3)
+  active               Boolean  @default(true)
+  firstResponseMinutes Int      @default(240)
+  resolutionMinutes    Int      @default(1440)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@unique([branchCode, name])
+  @@index([branchCode, active, level])
+}
+
+model HelpDeskStatus {
+  id         String   @id @default(uuid())
+  branchCode String
+  code       String
+  name       String
+  color      String   @default("#64748b")
+  closed     Boolean  @default(false)
+  sortOrder  Int      @default(0)
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([branchCode, code])
+  @@index([branchCode, active, sortOrder])
+}
+
+model HelpDeskTicket {
+  id               String   @id @default(uuid())
+  branchCode       String
+  ticketNo         String   @unique
+  trackingId       String   @unique
+  subject          String
+  body             String
+  requesterId      String
+  requesterName    String
+  requesterEmail   String   @default("")
+  ccEmails         String   @default("")
+  requesterIp      String   @default("")
+  requesterMac     String   @default("")
+  categoryId       String
+  priorityId       String
+  statusId         String
+  assignedUserId   String?
+  assignedUserName String   @default("")
+  locked           Boolean  @default(false)
+  lockedAt         DateTime?
+  lockedById       String   @default("")
+  lockedByName     String   @default("")
+  firstReplyAt     DateTime?
+  resolvedAt       DateTime?
+  closedAt         DateTime?
+  dueResponseAt    DateTime?
+  dueResolutionAt  DateTime?
+  lastActivityAt   DateTime @default(now())
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([branchCode, lastActivityAt])
+  @@index([requesterId, lastActivityAt])
+  @@index([assignedUserId, lastActivityAt])
+  @@index([statusId, lastActivityAt])
+  @@index([categoryId, createdAt])
+}
+
+model HelpDeskReply {
+  id           String   @id @default(uuid())
+  ticketId     String
+  branchCode   String
+  authorId     String
+  authorName   String
+  body         String
+  isStaff      Boolean  @default(false)
+  internalNote Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  @@index([ticketId, createdAt])
+  @@index([branchCode, createdAt])
+}
+
+model HelpDeskAttachment {
+  id           String   @id @default(uuid())
+  ticketId     String
+  replyId      String?
+  originalName String
+  storedName   String
+  mimeType     String   @default("application/octet-stream")
+  sizeBytes    Int
+  createdAt    DateTime @default(now())
+
+  @@index([ticketId, createdAt])
+}
+
+model HelpDeskKnowledgeCategory {
+  id          String   @id @default(uuid())
+  branchCode  String
+  name        String
+  description String   @default("")
+  active      Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([branchCode, name])
+}
+
+model HelpDeskKnowledgeArticle {
+  id            String   @id @default(uuid())
+  branchCode    String
+  categoryId    String
+  title         String
+  body          String
+  active        Boolean  @default(true)
+  createdById   String
+  createdByName String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([branchCode, active, updatedAt])
+}
+
+model HelpDeskCannedReply {
+  id          String   @id @default(uuid())
+  branchCode  String
+  title       String
+  body        String
+  active      Boolean  @default(true)
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([branchCode, title])
+}
+
+model HelpDeskActivity {
+  id          String   @id @default(uuid())
+  ticketId    String
+  branchCode  String
+  actorId     String
+  actorName   String
+  action      String
+  description String
+  createdAt   DateTime @default(now())
+
+  @@index([ticketId, createdAt])
+  @@index([branchCode, createdAt])
+}
+
+
+model LoginSecurityEvent {
+  id              String   @id @default(uuid())
+  usernameAttempt String   @default("")
+  ipAddress       String
+  macAddress      String   @default("")
+  success         Boolean  @default(false)
+  reason          String   @default("")
+  createdAt       DateTime @default(now())
+
+  @@index([ipAddress, createdAt])
+  @@index([usernameAttempt, createdAt])
+  @@index([success, createdAt])
+}
+
+model LoginSecurityBlock {
+  id            String   @id @default(uuid())
+  ipAddress     String   @unique
+  macAddress    String   @default("")
+  strikeLevel   Int      @default(0)
+  lastStrikeAt  DateTime?
+  blockedUntil  DateTime?
+  reason        String   @default("")
+  active        Boolean  @default(false)
+  clearedAt     DateTime?
+  clearedById   String   @default("")
+  clearedByName String   @default("")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([active, blockedUntil])
+}
