@@ -8,6 +8,5 @@ with
   create no indexes,
   no truncate,
   quote identifiers,
-  reset no sequences,
-  encoding 'utf-8'
+  reset no sequences
 ;
