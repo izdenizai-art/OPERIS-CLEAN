@@ -41,9 +41,9 @@ const checks = [
 
   ['CI uses PostgreSQL service', workflow.includes('image: postgres:16')],
   ['CI validates PostgreSQL Prisma schema', workflow.includes('prisma validate --schema prisma/schema.postgresql.prisma')],
-  ['CI creates PostgreSQL schema', workflow.includes('prisma db push --schema prisma/schema.postgresql.prisma')],
-  ['CI runs application against PostgreSQL', workflow.includes('Start OPERIS against PostgreSQL')],
-  ['CI includes SQLite migration smoke', workflow.includes('sqlite-data-migration-smoke')],
+  ['CI creates PostgreSQL schema', workflow.includes('-f migration/generated/000000000000_postgresql_init.sql')],
+  ['CI runs application against PostgreSQL', workflow.includes('Smoke test PostgreSQL health and login') && workflow.includes('node server/dist/index.js')],
+  ['CI includes SQLite migration smoke', workflow.includes('Migrate synthetic SQLite data with pgloader') && workflow.includes('Normalize Prisma SQLite timestamps')],
   ['Migration preserves identifier case', pgloader.includes('quote identifiers')],
   ['Migration does not recreate target Prisma tables', pgloader.includes('create no tables')],
   ['Migration row counts are verified', workflow.includes('verify-row-counts.sh')],

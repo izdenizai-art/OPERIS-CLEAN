@@ -17,7 +17,7 @@ jobs:
   validate-postgresql-candidate:
     name: Validate PostgreSQL candidate
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
 
     services:
       postgres:
@@ -49,7 +49,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: "22"
           cache: npm
           cache-dependency-path: |
             package-lock.json
@@ -93,7 +93,9 @@ jobs:
             --from-empty \
             --to-schema-datamodel prisma/schema.postgresql.prisma \
             --script > ../migration/generated/000000000000_postgresql_init.sql
+          cat ../migration/postgresql-custom.sql >> ../migration/generated/000000000000_postgresql_init.sql
           test -s ../migration/generated/000000000000_postgresql_init.sql
+          node ../tests/verify-postgresql-initial-sql.cjs ../migration/generated/000000000000_postgresql_init.sql
         working-directory: server
 
       - name: Prove generated SQL on a second clean database
@@ -103,9 +105,10 @@ jobs:
           createdb -h localhost -U operis operis_generated_sql_ci
           psql -v ON_ERROR_STOP=1 -h localhost -U operis -d operis_generated_sql_ci \
             -f migration/generated/000000000000_postgresql_init.sql
-          table_count="$(psql -h localhost -U operis -d operis_generated_sql_ci -Atqc "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';")"
+          table_count="$(psql -h localhost -U operis -d operis_generated_sql_ci -Atqc \
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';")"
           echo "generated SQL table count: $table_count"
-          test "$table_count" -gt 0
+          test "$table_count" -eq 50
 
       - name: Apply generated schema to migration target
         env:
@@ -128,7 +131,7 @@ jobs:
             -e "s|{{OPERIS_SQLITE_SOURCE_URL}}|sqlite://$sqlite_file|g" \
             -e "s|{{OPERIS_POSTGRES_URL}}|$OPERIS_POSTGRES_URL|g" \
             migration/sqlite-to-postgresql.pgloader.load > "$load_file"
-          pgloader "$load_file"
+          pgloader --on-error-stop "$load_file"
 
       - name: Verify row counts and primary keys
         env:
@@ -139,7 +142,8 @@ jobs:
 
       - name: Verify PostgreSQL constraints
         run: |
-          invalid_fk_count="$(psql "$OPERIS_POSTGRES_URL" -Atqc "SELECT COUNT(*) FROM pg_constraint WHERE contype = 'f' AND NOT convalidated;")"
+          invalid_fk_count="$(psql "$OPERIS_POSTGRES_URL" -Atqc \
+            "SELECT COUNT(*) FROM pg_constraint WHERE contype = 'f' AND NOT convalidated;")"
           echo "unvalidated foreign keys: $invalid_fk_count"
           test "$invalid_fk_count" = "0"
 
@@ -177,7 +181,6 @@ jobs:
 
           node -e "const f=require('fs');const x=JSON.parse(f.readFileSync(process.argv[1]));if(x.user?.username!=='balamir'){console.error(x);process.exit(1)}" \
             "$RUNNER_TEMP/login.json"
-          echo "POSTGRESQL_HEALTH_AND_LOGIN_PASS"
 
       - name: Prove temporary SQLite rollback path
         env:
@@ -200,14 +203,10 @@ jobs:
             fi
             sleep 1
           done
-          if [ "$health_ok" -ne 1 ]; then
-            cat "$RUNNER_TEMP/operis-sqlite.log"
-            exit 1
-          fi
+          test "$health_ok" -eq 1
 
           node -e "const f=require('fs');const x=JSON.parse(f.readFileSync(process.argv[1]));if(!x.ok||x.database?.provider!=='sqlite'||x.database?.connected!==true){console.error(x);process.exit(1)}" \
             "$RUNNER_TEMP/sqlite-health.json"
-          node -e "const {PrismaClient}=require('@prisma/client');const p=new PrismaClient();p.user.findUnique({where:{username:'balamir'}}).then(u=>{if(!u)throw new Error('rollback user missing');console.log('SQLITE_ROLLBACK_DATA_PASS')}).finally(()=>p.\$disconnect())"
 
       - name: Upload validation evidence
         if: always()

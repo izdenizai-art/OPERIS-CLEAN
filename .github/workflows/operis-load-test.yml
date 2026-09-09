@@ -1,0 +1,101 @@
+name: OPERIS 100 User Load Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Public/staging OPERIS URL, örn. https://operis-test.example.com"
+        required: true
+        type: string
+      branch_code:
+        description: "Test şube kodu"
+        required: true
+        default: "100"
+        type: string
+      mode:
+        description: "normal, helpdesk veya mixed"
+        required: true
+        default: "normal"
+        type: choice
+        options:
+          - normal
+          - helpdesk
+          - mixed
+      confirm_mixed_writes:
+        description: "mixed modu staging verisine Task yazar. Yalnız test ortamında çalıştıracağınızı onaylayın."
+        required: true
+        default: false
+        type: boolean
+      require_unique_users:
+        description: "100 gerçek online kullanıcı sertifikasyonu için 100 benzersiz kullanıcı zorunlu olsun."
+        required: true
+        default: true
+        type: boolean
+      helpdesk_scope:
+        description: "Help Desk yük kapsamı: mine standart kullanıcı, assigned cevaplayan, branch koordinatör."
+        required: true
+        default: "mine"
+        type: choice
+        options:
+          - mine
+          - assigned
+          - branch
+      environment_confirmation:
+        description: "Yalnız staging/test için EXACT: I_CONFIRM_NON_PRODUCTION"
+        required: true
+        type: string
+
+jobs:
+  k6:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Safety gate - non-production only
+        shell: bash
+        run: |
+          if [ "${{ inputs.environment_confirmation }}" != "I_CONFIRM_NON_PRODUCTION" ]; then
+            echo "100-user load test yalnız staging/test ortamında çalıştırılabilir."
+            exit 1
+          fi
+
+          case "${{ inputs.base_url }}" in
+            *localhost*|*127.0.0.1*|*0.0.0.0*)
+              echo "Hosted runner için loopback base_url geçersiz."
+              exit 1
+              ;;
+          esac
+
+      - name: Safety gate for mixed write load
+        if: ${{ inputs.mode == 'mixed' }}
+        shell: bash
+        run: |
+          if [ "${{ inputs.confirm_mixed_writes }}" != "true" ]; then
+            echo "mixed modu Task verisi oluşturur/günceller. Yalnız staging/test ortamında explicit onay ile çalıştırın."
+            exit 1
+          fi
+
+      - name: Install k6
+        shell: bash
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
+            --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | \
+            sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install -y k6
+
+      - name: Run 100-VU load test
+        env:
+          OPERIS_BASE_URL: ${{ inputs.base_url }}
+          OPERIS_BRANCH_CODE: ${{ inputs.branch_code }}
+          OPERIS_LOAD_MODE: ${{ inputs.mode }}
+          OPERIS_REQUIRE_UNIQUE_USERS: ${{ inputs.require_unique_users }}
+          OPERIS_HELPDESK_SCOPE: ${{ inputs.helpdesk_scope }}
+          OPERIS_LOAD_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+          OPERIS_LOAD_USERNAME: ${{ secrets.OPERIS_LOAD_USERNAME }}
+          OPERIS_LOAD_PASSWORD: ${{ secrets.OPERIS_LOAD_PASSWORD }}
+          OPERIS_LOAD_USERS_JSON: ${{ secrets.OPERIS_LOAD_USERS_JSON }}
+        run: k6 run tests/load/operis-100-vu.js

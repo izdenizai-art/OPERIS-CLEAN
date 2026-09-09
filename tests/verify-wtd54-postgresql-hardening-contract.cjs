@@ -60,8 +60,8 @@ const checks = [
   ['CI PostgreSQL service container', workflow.includes('image: postgres:16')],
   ['CI validates PostgreSQL schema', workflow.includes('prisma validate --schema prisma/schema.postgresql.prisma')],
   ['CI generates reviewable initial migration SQL', workflow.includes('prisma migrate diff') && workflow.includes('000000000000_postgresql_init.sql')],
-  ['CI applies initial SQL to second clean DB', workflow.includes('operis_migration_sql_ci')],
-  ['CI exports migration SQL artifact', workflow.includes('operis-postgresql-initial-migration-sql')],
+  ['CI applies initial SQL to second clean DB', workflow.includes('operis_generated_sql_ci') && workflow.includes('Prove generated SQL on a second clean database')],
+  ['CI exports migration SQL artifact', workflow.includes('operis-postgresql-candidate-evidence') && workflow.includes('migration/generated/000000000000_postgresql_init.sql')],
 
   ['pgloader target schema not recreated', pgloader.includes('create no tables')],
   ['pgloader identifier case preserved', pgloader.includes('quote identifiers')],
@@ -69,7 +69,7 @@ const checks = [
   ['All table row counts checked', rowVerify.includes('ROW_COUNT_VALIDATION_PASS')],
   ['Primary key sets checked', pkVerify.includes('PRIMARY_KEY_VALIDATION_PASS')],
   ['CI runs PK-set verifier', workflow.includes('verify-primary-keys.sh')],
-  ['CI validates FK constraints', workflow.includes('VALIDATE CONSTRAINT')],
+  ['CI validates FK constraints', workflow.includes("NOT convalidated") && workflow.includes('invalid_fk_count')],
 ];
 
 let failed = false;
