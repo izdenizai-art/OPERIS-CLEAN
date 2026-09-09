@@ -50,3 +50,6 @@ temp/
 Thumbs.db
 .vscode/
 .idea/
+
+# Generated frontend build
+server/public/
