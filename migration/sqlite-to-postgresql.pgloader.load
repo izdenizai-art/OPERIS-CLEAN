@@ -1,6 +1,6 @@
 load database
-  from '{{OPERIS_SQLITE_SOURCE_URL}}'
-  into '{{OPERIS_POSTGRES_URL}}'
+  from {{OPERIS_SQLITE_SOURCE_URL}}
+  into {{OPERIS_POSTGRES_URL}}
 
 with
   data only,
