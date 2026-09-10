@@ -45,7 +45,7 @@ jobs:
         run: npm run typecheck
 
       - name: Production build
-        run: npm run build
+        run: npx vite build
 
   backend:
     name: Backend + Prisma
