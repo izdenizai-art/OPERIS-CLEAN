@@ -109,35 +109,32 @@ jobs:
           npm install --no-save --package-lock=false @playwright/test@1.55.0
           npx playwright install chromium
 
-      - name: Start OPERIS
-        shell: pwsh
-        run: |
-          $process = Start-Process -FilePath "node" -ArgumentList "server/dist/index.js" -PassThru -RedirectStandardOutput "$env:RUNNER_TEMP\operis.stdout.log" -RedirectStandardError "$env:RUNNER_TEMP\operis.stderr.log"
-          "OPERIS_PID=$($process.Id)" | Out-File -FilePath $env:GITHUB_ENV -Append
-          for ($i = 0; $i -lt 60; $i++) {
-            try {
-              $health = Invoke-RestMethod "http://127.0.0.1:3001/api/health" -TimeoutSec 2
-              if ($health.ok -and $health.version -eq "6.3.63") { exit 0 }
-            } catch {}
-            Start-Sleep -Seconds 1
-          }
-          Get-Content "$env:RUNNER_TEMP\operis.stdout.log" -ErrorAction SilentlyContinue
-          Get-Content "$env:RUNNER_TEMP\operis.stderr.log" -ErrorAction SilentlyContinue
-          exit 1
-
-      - name: Run Playwright first-run smoke
+      - name: Start OPERIS and run Playwright first-run smoke
         shell: pwsh
         env:
           OPERIS_BASE_URL: http://127.0.0.1:3001
-        run: npx playwright test tests/e2e/operis-smoke.spec.cjs --reporter=line
-
-      - name: Stop OPERIS and show logs
-        if: always()
-        shell: pwsh
         run: |
-          if ($env:OPERIS_PID) { Stop-Process -Id $env:OPERIS_PID -Force -ErrorAction SilentlyContinue }
-          Get-Content "$env:RUNNER_TEMP\operis.stdout.log" -ErrorAction SilentlyContinue
-          Get-Content "$env:RUNNER_TEMP\operis.stderr.log" -ErrorAction SilentlyContinue
+          $process = Start-Process -FilePath "node" -ArgumentList "server/dist/index.js" -PassThru -RedirectStandardOutput "$env:RUNNER_TEMP\operis.stdout.log" -RedirectStandardError "$env:RUNNER_TEMP\operis.stderr.log"
+          try {
+            $ready = $false
+            for ($i = 0; $i -lt 60; $i++) {
+              try {
+                $health = Invoke-RestMethod "$env:OPERIS_BASE_URL/api/health" -TimeoutSec 2
+                if ($health.ok -and $health.version -eq "6.3.63") {
+                  $ready = $true
+                  break
+                }
+              } catch {}
+              Start-Sleep -Seconds 1
+            }
+            if (-not $ready) { throw "OPERIS health endpoint hazır olmadı." }
+            npx playwright test tests/e2e/operis-smoke.spec.cjs --reporter=line
+            if ($LASTEXITCODE -ne 0) { throw "Playwright smoke başarısız." }
+          } finally {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            Get-Content "$env:RUNNER_TEMP\operis.stdout.log" -ErrorAction SilentlyContinue
+            Get-Content "$env:RUNNER_TEMP\operis.stderr.log" -ErrorAction SilentlyContinue
+          }
 
       - name: Generate AI-ready Windows failure handoff
         if: failure()
