@@ -1,4 +1,4 @@
-﻿param(
+param(
   [Parameter(Mandatory=$true)][string]$AdminDatabaseUrl,
   [Parameter(Mandatory=$true)][string]$BackupFile,
   [string]$TestDatabaseName = ""

@@ -1,4 +1,4 @@
-﻿﻿param(
+param(
   [Parameter(Mandatory=$true)][string]$InstallRoot,
   [Parameter(Mandatory=$true)][string]$BackupDb,
   [Parameter(Mandatory=$true)][ValidateSet("YES")][string]$ConfirmRestore

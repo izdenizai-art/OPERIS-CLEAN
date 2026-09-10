@@ -1,4 +1,4 @@
-﻿﻿param(
+param(
   [Parameter(Mandatory=$true)][string]$DatabaseUrl,
   [Parameter(Mandatory=$true)][string]$BackupFile,
   [Parameter(Mandatory=$true)][ValidateSet("YES")][string]$ConfirmRestore
