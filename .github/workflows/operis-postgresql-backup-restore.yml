@@ -1,0 +1,159 @@
+name: OPERIS PostgreSQL Backup Restore Validation
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - postgresql-candidate-validation
+    paths:
+      - "windows/postgresql-backup.ps1"
+      - "windows/postgresql-restore.ps1"
+      - "windows/postgresql-restore-test.ps1"
+      - "server/prisma/schema.postgresql.prisma"
+      - ".github/workflows/operis-postgresql-backup-restore.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: operis-postgresql-backup-restore-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backup-restore:
+    name: pg_dump -> isolated pg_restore
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: operis_backup_ci
+          POSTGRES_USER: operis
+          POSTGRES_PASSWORD: operis_ci_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U operis -d operis_backup_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      DATABASE_URL: postgresql://operis:operis_ci_password@localhost:5432/operis_backup_ci?schema=public
+      OPERIS_BACKUP_URL: postgresql://operis:operis_ci_password@localhost:5432/operis_backup_ci
+      OPERIS_ADMIN_URL: postgresql://operis:operis_ci_password@localhost:5432/postgres
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Install PostgreSQL client
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+          pg_dump --version
+          pg_restore --version
+          psql --version
+
+      - name: Install server dependencies
+        working-directory: server
+        run: npm ci --no-audit --no-fund
+
+      - name: Generate Prisma client and create PostgreSQL schema
+        working-directory: server
+        run: |
+          npx prisma generate --schema prisma/schema.postgresql.prisma
+          npx prisma db push --schema prisma/schema.postgresql.prisma --skip-generate
+
+      - name: Apply OPERIS custom PostgreSQL objects and insert restore sentinel
+        shell: bash
+        env:
+          PGPASSWORD: operis_ci_password
+        run: |
+          psql -h localhost -U operis -d operis_backup_ci -v ON_ERROR_STOP=1 \
+            -f migration/postgresql-custom.sql
+
+          psql -h localhost -U operis -d operis_backup_ci -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO "SystemMigration" ("key","appliedAt","note")
+          VALUES ('wtd59-backup-restore-sentinel', CURRENT_TIMESTAMP, 'WTD59 backup restore validation')
+          ON CONFLICT ("key") DO UPDATE SET "note" = EXCLUDED."note";
+          SQL
+
+          serial_index="$(psql -h localhost -U operis -d operis_backup_ci -Atqc \
+            "SELECT COUNT(*) FROM pg_indexes WHERE schemaname='public' AND indexname='Asset_active_serialNumber_unique';")"
+          barcode_index="$(psql -h localhost -U operis -d operis_backup_ci -Atqc \
+            "SELECT COUNT(*) FROM pg_indexes WHERE schemaname='public' AND indexname='Asset_active_barcode_unique';")"
+          test "$serial_index" = "1"
+          test "$barcode_index" = "1"
+
+      - name: Run OPERIS PostgreSQL backup script
+        shell: pwsh
+        run: |
+          $dest = Join-Path $env:RUNNER_TEMP "operis-pg-backup"
+          .\windows\postgresql-backup.ps1 `
+            -DatabaseUrl $env:OPERIS_BACKUP_URL `
+            -DestinationRoot $dest `
+            -RetentionDays 7
+
+          $dump = Get-ChildItem $dest -Filter "operis-postgresql-*.dump" -File |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+          if (-not $dump) { throw "PostgreSQL dump üretilmedi." }
+          if (-not (Test-Path "$($dump.FullName).manifest.json")) { throw "Backup manifesti üretilmedi." }
+
+          "OPERIS_PG_DUMP=$($dump.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Run isolated restore test
+        shell: pwsh
+        run: |
+          .\windows\postgresql-restore-test.ps1 `
+            -AdminDatabaseUrl $env:OPERIS_ADMIN_URL `
+            -BackupFile $env:OPERIS_PG_DUMP `
+            -TestDatabaseName "operis_restore_wtd58"
+
+      - name: Independently verify restored sentinel
+        shell: bash
+        env:
+          PGPASSWORD: operis_ci_password
+        run: |
+          createdb -h localhost -U operis operis_restore_verify
+          trap 'dropdb -h localhost -U operis --if-exists operis_restore_verify' EXIT
+
+          pg_restore \
+            -h localhost \
+            -U operis \
+            -d operis_restore_verify \
+            --no-owner \
+            --no-privileges \
+            "$OPERIS_PG_DUMP"
+
+          sentinel="$(psql -h localhost -U operis -d operis_restore_verify -Atqc \
+            "SELECT COUNT(*) FROM \"SystemMigration\" WHERE \"key\"='wtd59-backup-restore-sentinel';")"
+          test "$sentinel" = "1"
+
+          table_count="$(psql -h localhost -U operis -d operis_restore_verify -Atqc \
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE';")"
+          test "$table_count" = "50"
+
+          serial_index="$(psql -h localhost -U operis -d operis_restore_verify -Atqc \
+            "SELECT COUNT(*) FROM pg_indexes WHERE schemaname='public' AND indexname='Asset_active_serialNumber_unique';")"
+          barcode_index="$(psql -h localhost -U operis -d operis_restore_verify -Atqc \
+            "SELECT COUNT(*) FROM pg_indexes WHERE schemaname='public' AND indexname='Asset_active_barcode_unique';")"
+          test "$serial_index" = "1"
+          test "$barcode_index" = "1"
+
+      - name: Upload backup/restore evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: operis-postgresql-backup-restore-evidence
+          path: |
+            ${{ env.OPERIS_PG_DUMP }}
+            ${{ env.OPERIS_PG_DUMP }}.manifest.json
+          if-no-files-found: warn

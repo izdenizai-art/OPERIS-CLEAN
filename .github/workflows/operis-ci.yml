@@ -1,0 +1,91 @@
+name: OPERIS Final CI
+
+on:
+  push:
+    branches: ["main", "master", "postgresql-candidate-validation"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: operis-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regression:
+    name: Regression / Kilitli Modüller
+    runs-on: ubuntu-latest
+    steps:
+      - name: Repository checkout
+        uses: actions/checkout@v6
+
+      - name: Node.js 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Kritik çalışan modülleri hash ile doğrula
+        run: node tests/verify-regression-baseline.cjs
+
+  frontend:
+    name: Frontend TypeScript + Production Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Repository checkout
+        uses: actions/checkout@v6
+
+      - name: Node.js 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Frontend bağımlılıklarını kur
+        run: npm ci --no-audit --no-fund
+
+      - name: TypeScript kontrolü
+        run: npm run typecheck
+
+      - name: Production build
+        run: npm run build
+
+  backend:
+    name: Backend + Prisma
+    runs-on: ubuntu-latest
+    steps:
+      - name: Repository checkout
+        uses: actions/checkout@v6
+
+      - name: Node.js 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Backend bağımlılıklarını kur
+        working-directory: server
+        run: npm ci --no-audit --no-fund
+
+      - name: Prisma schema doğrula
+        working-directory: server
+        run: npx prisma validate
+
+      - name: Prisma Client üret
+        working-directory: server
+        run: npx prisma generate
+
+      - name: Backend TypeScript build
+        working-directory: server
+        run: npm run build
+
+  helpdesk-guards:
+    name: Help Desk Yapısal Güvenlik Kontrolleri
+    runs-on: ubuntu-latest
+    steps:
+      - name: Repository checkout
+        uses: actions/checkout@v6
+
+      - name: Node.js 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Help Desk beklenen guard ve yetkileri
+        run: node tests/verify-helpdesk-structure.cjs

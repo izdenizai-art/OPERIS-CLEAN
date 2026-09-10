@@ -1,0 +1,164 @@
+name: OPERIS Staging SQLite to PostgreSQL Rehearsal
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "EXACT: I_CONFIRM_STAGING_COPY_ONLY"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: operis-staging-sqlite-postgresql-rehearsal
+  cancel-in-progress: false
+
+jobs:
+  staging-copy-rehearsal:
+    name: Real SQLite copy -> isolated staging PostgreSQL
+    runs-on: [self-hosted, linux, operis-staging]
+    environment: operis-staging
+    timeout-minutes: 90
+
+    env:
+      OPERIS_SQLITE_FILE: ${{ vars.OPERIS_STAGING_SQLITE_FILE }}
+      OPERIS_POSTGRES_URL: ${{ secrets.OPERIS_STAGING_POSTGRES_URL }}
+      OPERIS_EXPECTED_TARGET_DATABASE: ${{ vars.OPERIS_STAGING_TARGET_DB }}
+      OPERIS_REHEARSAL_CONFIRM: ${{ inputs.confirmation }}
+      DATABASE_URL: ${{ secrets.OPERIS_STAGING_POSTGRES_URL }}
+
+    steps:
+      - name: Safety gate
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ github.ref }}" != "refs/heads/postgresql-candidate-validation" ]]; then
+            echo "Bu rehearsal yalnız postgresql-candidate-validation branch'inde çalıştırılabilir." >&2
+            exit 1
+          fi
+
+          if [[ "$OPERIS_REHEARSAL_CONFIRM" != "I_CONFIRM_STAGING_COPY_ONLY" ]]; then
+            echo "Geçersiz staging onayı." >&2
+            exit 1
+          fi
+
+          test -n "$OPERIS_SQLITE_FILE"
+          test -n "$OPERIS_POSTGRES_URL"
+          test -n "$OPERIS_EXPECTED_TARGET_DATABASE"
+          test -f "$OPERIS_SQLITE_FILE"
+
+          source_real="$(realpath "$OPERIS_SQLITE_FILE")"
+          workspace_real="$(realpath "$GITHUB_WORKSPACE")"
+
+          case "$source_real" in
+            "$workspace_real"|"$workspace_real"/*)
+              echo "GÜVENLİK BLOĞU: gerçek SQLite rehearsal kaynağı GITHUB_WORKSPACE dışında olmalıdır." >&2
+              exit 1
+              ;;
+          esac
+
+          if [[ -L "$OPERIS_SQLITE_FILE" ]]; then
+            echo "GÜVENLİK BLOĞU: rehearsal SQLite kaynağı symbolic link olamaz." >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@v6
+
+      - name: Verify required self-hosted tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          for tool in node npm sqlite3 psql pgloader sha256sum; do
+            command -v "$tool"
+          done
+          node --version
+          npm --version
+          sqlite3 --version
+          psql --version
+          pgloader --version
+
+      - name: Verify source copy is readable and target database identity is exact
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          source_hash="$(sha256sum "$OPERIS_SQLITE_FILE" | awk '{print $1}')"
+          source_integrity="$(sqlite3 "$OPERIS_SQLITE_FILE" 'PRAGMA integrity_check;')"
+          current_database="$(psql "$OPERIS_POSTGRES_URL" -v ON_ERROR_STOP=1 -Atqc 'SELECT current_database();')"
+
+          test "$source_integrity" = "ok"
+          test "$current_database" = "$OPERIS_EXPECTED_TARGET_DATABASE"
+
+          echo "SOURCE_SQLITE_SHA256=$source_hash"
+          echo "TARGET_DATABASE=$current_database"
+
+      - name: Refuse non-empty target before schema creation
+        shell: bash
+        run: |
+          set -euo pipefail
+          table_count="$(psql "$OPERIS_POSTGRES_URL" -v ON_ERROR_STOP=1 -Atqc \
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE';")"
+          if [[ "$table_count" != "0" ]]; then
+            echo "GÜVENLİK BLOĞU: staging target DB boş değil. table_count=$table_count" >&2
+            exit 1
+          fi
+
+      - name: Install server dependencies
+        working-directory: server
+        shell: bash
+        run: npm ci --no-audit --no-fund
+
+      - name: Create PostgreSQL schema only
+        working-directory: server
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx prisma generate --schema prisma/schema.postgresql.prisma
+          npx prisma db push --schema prisma/schema.postgresql.prisma --skip-generate
+
+      - name: Rehearse real SQLite copy migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash migration/rehearse-sqlite-copy-to-postgresql.sh | tee "$RUNNER_TEMP/operis-staging-rehearsal.log"
+
+      - name: Final PostgreSQL structural checks
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tables="$(psql "$OPERIS_POSTGRES_URL" -Atqc \
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE';")"
+          invalid_fks="$(psql "$OPERIS_POSTGRES_URL" -Atqc \
+            "SELECT COUNT(*) FROM pg_constraint WHERE contype='f' AND NOT convalidated;")"
+          serial_index="$(psql "$OPERIS_POSTGRES_URL" -Atqc \
+            "SELECT COUNT(*) FROM pg_indexes WHERE schemaname='public' AND indexname='Asset_active_serialNumber_unique';")"
+          barcode_index="$(psql "$OPERIS_POSTGRES_URL" -Atqc \
+            "SELECT COUNT(*) FROM pg_indexes WHERE schemaname='public' AND indexname='Asset_active_barcode_unique';")"
+
+          test "$tables" = "50"
+          test "$invalid_fks" = "0"
+          test "$serial_index" = "1"
+          test "$barcode_index" = "1"
+
+      - name: Verify source SQLite remained byte-for-byte unchanged
+        shell: bash
+        run: |
+          set -euo pipefail
+          before="$(grep '^SOURCE_SQLITE_SHA256=' "$RUNNER_TEMP/operis-staging-rehearsal.log" | tail -1 | cut -d= -f2)"
+          after="$(sha256sum "$OPERIS_SQLITE_FILE" | awk '{print $1}')"
+          test -n "$before"
+          test "$before" = "$after"
+          echo "SOURCE_SQLITE_UNCHANGED_PASS"
+
+      - name: Upload non-sensitive rehearsal log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: operis-staging-rehearsal-evidence
+          path: ${{ runner.temp }}/operis-staging-rehearsal.log
+          if-no-files-found: warn
+          retention-days: 14

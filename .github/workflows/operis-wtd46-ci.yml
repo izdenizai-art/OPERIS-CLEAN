@@ -1,0 +1,235 @@
+name: OPERIS WTD46 Cloud Validation
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master, postgresql-candidate-validation ]
+  pull_request:
+
+jobs:
+  windows-build-powershell-e2e:
+    name: Windows 2022 build + PowerShell + Playwright
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Install frontend dependencies
+        shell: pwsh
+        run: npm ci --no-audit --no-fund
+
+      - name: Install server dependencies
+        shell: pwsh
+        run: npm --prefix server ci --no-audit --no-fund
+
+      - name: Generate Prisma client
+        shell: pwsh
+        run: npm --prefix server run prisma:generate
+
+      - name: Typecheck frontend
+        shell: pwsh
+        run: npm run typecheck
+
+      - name: Build frontend and server
+        shell: pwsh
+        run: npm run build
+
+      - name: Structural regression and current PostgreSQL contracts
+        shell: pwsh
+        run: |
+          node tests/verify-helpdesk-structure.cjs
+          node tests/verify-regression-baseline.cjs
+          node tests/verify-wtd53-postgresql-contract.cjs
+          node tests/verify-wtd54-postgresql-hardening-contract.cjs
+          node tests/verify-wtd55-postgresql-migration-contract.cjs
+          node tests/verify-wtd56-windows-postgresql-rehearsal-contract.cjs
+          node tests/verify-wtd57-preproduction-gates.cjs
+          node tests/verify-wtd58-backup-restore-gates.cjs
+          node tests/verify-wtd59-rollback-restore-contract.cjs
+          node tests/verify-wtd60-staging-copy-contract.cjs
+          node tests/verify-wtd61-load-integration-contract.cjs
+          node tests/verify-wtd62-execution-readiness-contract.cjs
+
+      - name: Parse every PowerShell script
+        shell: pwsh
+        run: |
+          $errorsFound = @()
+          Get-ChildItem -Recurse -Filter *.ps1 |
+            Where-Object { $_.FullName -notmatch '\\node_modules\\|\\dist\\|\\server\\public\\' } |
+            ForEach-Object {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errorsFound += $errors | ForEach-Object { "$($_.Extent.File):$($_.Extent.StartLineNumber): $($_.Message)" }
+            }
+          }
+          if ($errorsFound.Count -gt 0) {
+            $errorsFound | ForEach-Object { Write-Error $_ }
+            exit 1
+          }
+
+      - name: Validate Windows installer contract
+        shell: pwsh
+        run: ./tests/windows/install-contract-smoke.ps1
+
+      - name: Run scheduled-backup runtime smoke test
+        shell: pwsh
+        run: ./tests/windows/backup-runtime-smoke.ps1
+
+      - name: Prepare CI runtime database and static files
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "server/public/index.html")) { throw "Frontend build çıktısı server/public/index.html olarak hazırlanamadı." }
+          "DATABASE_URL=file:./ci.db" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "JWT_SECRET=$([Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)))" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "DATA_ENCRYPTION_KEY=$([Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)))" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "CLIENT_ORIGIN=http://127.0.0.1:3001" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "PUBLIC_URL=http://127.0.0.1:3001" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "COOKIE_SECURE=false" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "PORT=3001" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "BIND_HOST=127.0.0.1" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "NODE_ENV=production" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Create SQLite schema
+        shell: pwsh
+        working-directory: server
+        run: npx prisma db push --schema prisma/schema.sqlite.prisma --skip-generate
+
+      - name: Install Playwright Chromium
+        shell: pwsh
+        run: |
+          npm install --no-save --package-lock=false @playwright/test@1.55.0
+          npx playwright install chromium
+
+      - name: Start OPERIS
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath "node" -ArgumentList "server/dist/index.js" -PassThru -RedirectStandardOutput "$env:RUNNER_TEMP\operis.stdout.log" -RedirectStandardError "$env:RUNNER_TEMP\operis.stderr.log"
+          "OPERIS_PID=$($process.Id)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          for ($i = 0; $i -lt 60; $i++) {
+            try {
+              $health = Invoke-RestMethod "http://127.0.0.1:3001/api/health" -TimeoutSec 2
+              if ($health.ok -and $health.version -eq "6.3.63") { exit 0 }
+            } catch {}
+            Start-Sleep -Seconds 1
+          }
+          Get-Content "$env:RUNNER_TEMP\operis.stdout.log" -ErrorAction SilentlyContinue
+          Get-Content "$env:RUNNER_TEMP\operis.stderr.log" -ErrorAction SilentlyContinue
+          exit 1
+
+      - name: Run Playwright first-run smoke
+        shell: pwsh
+        env:
+          OPERIS_BASE_URL: http://127.0.0.1:3001
+        run: npx playwright test tests/e2e/operis-smoke.spec.cjs --reporter=line
+
+      - name: Stop OPERIS and show logs
+        if: always()
+        shell: pwsh
+        run: |
+          if ($env:OPERIS_PID) { Stop-Process -Id $env:OPERIS_PID -Force -ErrorAction SilentlyContinue }
+          Get-Content "$env:RUNNER_TEMP\operis.stdout.log" -ErrorAction SilentlyContinue
+          Get-Content "$env:RUNNER_TEMP\operis.stderr.log" -ErrorAction SilentlyContinue
+
+      - name: Generate AI-ready Windows failure handoff
+        if: failure()
+        shell: pwsh
+        env:
+          OPERIS_DIAGNOSTIC_DIR: ${{ runner.temp }}\operis-ci-diagnostics
+        run: node tests/ci/generate-ai-handoff.cjs
+
+      - name: Collect Windows CI diagnostics
+        if: always()
+        shell: pwsh
+        run: |
+          $diag = Join-Path $env:RUNNER_TEMP "operis-ci-diagnostics"
+          New-Item -ItemType Directory -Path $diag -Force | Out-Null
+          Copy-Item "$env:RUNNER_TEMP\operis.stdout.log" $diag -Force -ErrorAction SilentlyContinue
+          Copy-Item "$env:RUNNER_TEMP\operis.stderr.log" $diag -Force -ErrorAction SilentlyContinue
+          Copy-Item "server/public/index.html" $diag -Force -ErrorAction SilentlyContinue
+          node --version | Out-File (Join-Path $diag "node-version.txt") -Encoding UTF8
+          npm --version | Out-File (Join-Path $diag "npm-version.txt") -Encoding UTF8
+          Get-ChildItem server/prisma -Force | Out-String | Out-File (Join-Path $diag "prisma-files.txt") -Encoding UTF8
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: operis-windows-ci-diagnostics
+          path: ${{ runner.temp }}/operis-ci-diagnostics
+          if-no-files-found: warn
+
+  linux-docker-runtime:
+    name: Linux Docker build + runtime health
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build image
+        run: docker build -t operis-wtd46 .
+
+      - name: Run container
+        shell: bash
+        run: |
+          JWT_SECRET="$(openssl rand -hex 32)"
+          DATA_ENCRYPTION_KEY="$(openssl rand -base64 32)"
+          docker run -d --name operis-wtd46 \
+            -p 3001:3001 \
+            -v operis_wtd46_data:/data \
+            -e DATABASE_URL="file:/data/yaklasan-isler.db" \
+            -e OPERIS_DATA_DIR="/data" \
+            -e JWT_SECRET="$JWT_SECRET" \
+            -e DATA_ENCRYPTION_KEY="$DATA_ENCRYPTION_KEY" \
+            -e CLIENT_ORIGIN="http://127.0.0.1:3001" \
+            -e PUBLIC_URL="http://127.0.0.1:3001" \
+            -e COOKIE_SECURE=false \
+            -e PORT=3001 \
+            -e BIND_HOST="0.0.0.0" \
+            operis-wtd46
+
+      - name: Wait for health
+        shell: bash
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3001/api/health | tee /tmp/health.json | grep -q '"version":"6.3.63"'; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs operis-wtd46
+          exit 1
+
+      - name: Verify persistent SQLite file exists in container
+        shell: bash
+        run: docker exec operis-wtd46 sh -lc 'test -f /data/yaklasan-isler.db'
+
+      - name: Container logs
+        if: always()
+        run: docker logs operis-wtd46 || true
+
+      - name: Generate AI-ready Docker failure handoff
+        if: failure()
+        shell: bash
+        env:
+          OPERIS_DIAGNOSTIC_DIR: /tmp/operis-docker-diagnostics
+        run: node tests/ci/generate-ai-handoff.cjs || true
+
+      - name: Save Docker diagnostics
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p /tmp/operis-docker-diagnostics
+          docker logs operis-wtd46 > /tmp/operis-docker-diagnostics/container.log 2>&1 || true
+          docker inspect operis-wtd46 > /tmp/operis-docker-diagnostics/container-inspect.json 2>&1 || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: operis-docker-ci-diagnostics
+          path: /tmp/operis-docker-diagnostics
+          if-no-files-found: warn
