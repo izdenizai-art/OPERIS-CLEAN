@@ -26,11 +26,6 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: "22"
-          cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            server/package-lock.json
-
       - name: Parse all OPERIS PowerShell migration scripts
         shell: pwsh
         run: |
@@ -59,7 +54,7 @@ jobs:
       - name: Install server dependencies
         working-directory: server
         shell: pwsh
-        run: npm.cmd ci
+        run: npm.cmd ci --no-audit --no-fund
 
       - name: Create synthetic SQLite rollback source
         working-directory: server
@@ -117,6 +112,42 @@ jobs:
           if (-not (Test-Path (Join-Path $temp "schema.sqlite.prisma"))) {
             throw "SQLite schema backup ZIP içinde yok."
           }
+
+      - name: Prove Windows SQLite rollback from verified backup
+        shell: pwsh
+        run: |
+          $inspect = Join-Path $env:RUNNER_TEMP "operis-prepg-inspect"
+          if (Test-Path $inspect) {
+            Remove-Item $inspect -Recurse -Force
+          }
+          Expand-Archive $env:OPERIS_PREPG_ZIP $inspect -Force
+
+          $backupDb = Join-Path $inspect "yaklasan-isler.db"
+          $targetDb = Join-Path $env:GITHUB_WORKSPACE "server\prisma\yaklasan-isler.db"
+
+          if (-not (Test-Path $backupDb)) {
+            throw "Rollback test backup DB bulunamadı."
+          }
+
+          $expectedHash = (Get-FileHash $backupDb -Algorithm SHA256).Hash
+          Set-Content -Path $targetDb -Value "INTENTIONALLY_CORRUPTED_FOR_ROLLBACK_TEST" -Encoding ASCII
+          $corruptedHash = (Get-FileHash $targetDb -Algorithm SHA256).Hash
+
+          if ($corruptedHash -eq $expectedHash) {
+            throw "Rollback provası için hedef DB değiştirilemedi."
+          }
+
+          .\windows\rollback-postgresql-to-sqlite.ps1 `
+            -InstallRoot $env:GITHUB_WORKSPACE `
+            -BackupDb $backupDb `
+            -ConfirmRestore YES
+
+          $restoredHash = (Get-FileHash $targetDb -Algorithm SHA256).Hash
+          if ($restoredHash -ne $expectedHash) {
+            throw "Windows rollback sonrası SQLite SHA256 eşleşmedi."
+          }
+
+          Write-Host "WINDOWS_SQLITE_ROLLBACK_REHEARSAL_PASS" -ForegroundColor Green
 
       - uses: actions/upload-artifact@v4
         if: always()

@@ -1,4 +1,4 @@
-﻿﻿﻿param(
+﻿param(
   [Parameter(Mandatory=$true)][string]$NetworkEnabled,
   [Parameter(Mandatory=$true)][AllowEmptyString()][string]$NetworkPath,
   [Parameter(Mandatory=$true)][ValidateRange(1,3650)][int]$RetentionDays
