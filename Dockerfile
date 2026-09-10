@@ -1,18 +1,18 @@
-FROM node:22-alpine AS client-build
+FROM node:24.21.0-alpine AS client-build
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci --no-audit --no-fund
 COPY . .
 RUN npx vite build
 
-FROM node:22-alpine AS server-build
+FROM node:24.21.0-alpine AS server-build
 WORKDIR /app/server
 COPY server/package*.json ./
 RUN npm ci --no-audit --no-fund
 COPY server .
 RUN npx prisma generate && npm run build
 
-FROM node:22-alpine
+FROM node:24.21.0-alpine
 WORKDIR /app/server
 ENV NODE_ENV=production
 COPY --from=server-build /app/server/package*.json ./

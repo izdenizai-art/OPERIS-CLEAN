@@ -21,7 +21,7 @@ jobs:
       - name: Node.js 22
         uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: "24.21.0"
 
       - name: Kritik çalışan modülleri hash ile doğrula
         run: node tests/verify-regression-baseline.cjs
@@ -36,7 +36,7 @@ jobs:
       - name: Node.js 22
         uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: "24.21.0"
 
       - name: Frontend bağımlılıklarını kur
         run: npm ci --no-audit --no-fund
@@ -59,7 +59,7 @@ jobs:
       - name: Node.js 22
         uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: "24.21.0"
 
       - name: Backend bağımlılıklarını kur
         working-directory: server
@@ -87,7 +87,7 @@ jobs:
       - name: Node.js 22
         uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: "24.21.0"
 
       - name: Help Desk beklenen guard ve yetkileri
         run: node tests/verify-helpdesk-structure.cjs

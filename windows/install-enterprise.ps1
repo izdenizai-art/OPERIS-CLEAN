@@ -224,7 +224,7 @@ function Install-NodeFromOfficialMsi {
     $downloadRoot = Join-Path $env:TEMP "Operis-NodeBootstrap"
     New-Item -ItemType Directory -Path $downloadRoot -Force | Out-Null
 
-    $releaseBase = "https://nodejs.org/download/release/latest-v24.x"
+    $releaseBase = "https://nodejs.org/download/release/v24.21.0"
     $checksumsUrl = "$releaseBase/SHASUMS256.txt"
     $checksumsFile = Join-Path $downloadRoot "SHASUMS256.txt"
 
@@ -242,7 +242,7 @@ function Install-NodeFromOfficialMsi {
 
         $checksumLines = Get-Content $checksumsFile
         $msiLine = $checksumLines |
-            Where-Object { $_ -match "node-v24\.[0-9]+\.[0-9]+-x64\.msi$" } |
+            Where-Object { $_ -match "node-v24\.21\.0-x64\.msi$" } |
             Select-Object -First 1
 
         if (-not $msiLine) {
@@ -296,7 +296,7 @@ function Install-NodeFromOfficialMsi {
         }
 
         $major = [int]((& $node --version).TrimStart("v").Split(".")[0])
-        if ($major -lt 20 -or $major -gt 24) {
+        if ($major -ne 24) {
             throw "Kurulan Node.js sürümü desteklenmiyor: $(& $node --version)"
         }
 
@@ -308,7 +308,7 @@ function Install-NodeFromOfficialMsi {
         Write-Host ""
         Write-Host "Node.js otomatik indirilemedi veya kurulamadı." -ForegroundColor Red
         Write-Host "Manuel indirme adresi:" -ForegroundColor Yellow
-        Write-Host "https://nodejs.org/download/release/latest-v24.x/" -ForegroundColor Cyan
+        Write-Host "https://nodejs.org/download/release/v24.21.0/" -ForegroundColor Cyan
         Write-Host ""
         throw
     }
@@ -318,14 +318,14 @@ function Ensure-Node {
     $node = Find-Node
     if ($node) {
         $major = [int]((& $node --version).TrimStart("v").Split(".")[0])
-        if ($major -ge 20 -and $major -le 24) { return $node }
+        if ($major -eq 24) { return $node }
         Write-Log "Node.js sürümü desteklenen aralıkta değil: $(& $node --version)" "WARN"
     }
 
     $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
     if ($winget) {
         Write-Step "Node.js LTS Winget üzerinden kuruluyor"
-        & winget install --id OpenJS.NodeJS.LTS --exact --silent --accept-package-agreements --accept-source-agreements
+        & winget install --id OpenJS.NodeJS.LTS --version 24.21.0 --exact --silent --accept-package-agreements --accept-source-agreements
         $wingetExit = $LASTEXITCODE
 
         Refresh-Path
@@ -334,7 +334,7 @@ function Ensure-Node {
 
         if ($wingetExit -eq 0 -and $node) {
             $major = [int]((& $node --version).TrimStart("v").Split(".")[0])
-            if ($major -ge 20 -and $major -le 24) {
+            if ($major -eq 24) {
                 Write-Log "Node.js Winget kurulumu başarılı: $(& $node --version)"
                 return $node
             }

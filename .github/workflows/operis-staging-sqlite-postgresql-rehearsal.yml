@@ -148,7 +148,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          before="$(grep '^SOURCE_SQLITE_SHA256=' "$RUNNER_TEMP/operis-staging-rehearsal.log" | tail -1 | cut -d= -f2)"
+          before="$(grep '^SQLITE_SOURCE_SHA256=' "$RUNNER_TEMP/operis-staging-rehearsal.log" | tail -1 | cut -d= -f2)"
           after="$(sha256sum "$OPERIS_SQLITE_FILE" | awk '{print $1}')"
           test -n "$before"
           test "$before" = "$after"

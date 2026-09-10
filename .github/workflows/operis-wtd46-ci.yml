@@ -16,9 +16,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Verify real installer Node MSI bootstrap
+        shell: pwsh
+        run: ./tests/windows/node-bootstrap-smoke.ps1
+
       - uses: actions/setup-node@v6
         with:
-          node-version: '22'
+          node-version: '24.21.0'
 
       - name: Install frontend dependencies
         shell: pwsh
@@ -89,8 +93,12 @@ jobs:
         run: |
           if (-not (Test-Path "server/public/index.html")) { throw "Frontend build çıktısı server/public/index.html olarak hazırlanamadı." }
           "DATABASE_URL=file:./ci.db" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "JWT_SECRET=$([Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)))" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "DATA_ENCRYPTION_KEY=$([Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)))" | Out-File -FilePath $env:GITHUB_ENV -Append
+          $jwt = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+          $key = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+          Write-Output "::add-mask::$jwt"
+          Write-Output "::add-mask::$key"
+          "JWT_SECRET=$jwt" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "DATA_ENCRYPTION_KEY=$key" | Out-File -FilePath $env:GITHUB_ENV -Append
           "CLIENT_ORIGIN=http://127.0.0.1:3001" | Out-File -FilePath $env:GITHUB_ENV -Append
           "PUBLIC_URL=http://127.0.0.1:3001" | Out-File -FilePath $env:GITHUB_ENV -Append
           "COOKIE_SECURE=false" | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -225,7 +233,7 @@ jobs:
         run: |
           mkdir -p /tmp/operis-docker-diagnostics
           docker logs operis-wtd46 > /tmp/operis-docker-diagnostics/container.log 2>&1 || true
-          docker inspect operis-wtd46 > /tmp/operis-docker-diagnostics/container-inspect.json 2>&1 || true
+          docker inspect --format '{{json .State}}' operis-wtd46 > /tmp/operis-docker-diagnostics/container-state.json 2>&1 || true
 
       - uses: actions/upload-artifact@v4
         if: always()

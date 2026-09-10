@@ -10,7 +10,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate deploy",
     "prisma:dev": "prisma migrate dev",
-    "prisma:push": "prisma db push --accept-data-loss"
+    "prisma:push": "prisma db push"
   },
   "dependencies": {
     "@prisma/client": "^6.7.0",
