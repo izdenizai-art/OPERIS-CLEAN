@@ -8,7 +8,8 @@ const baseline = JSON.parse(fs.readFileSync(baselinePath, 'utf8'));
 
 function sha256(filePath) {
   const hash = crypto.createHash('sha256');
-  hash.update(fs.readFileSync(filePath));
+  const normalized = fs.readFileSync(filePath, 'utf8').replace(/\r\n/g, '\n');
+  hash.update(normalized, 'utf8');
   return hash.digest('hex');
 }
 
