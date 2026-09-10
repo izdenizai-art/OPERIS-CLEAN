@@ -50,6 +50,8 @@ jobs:
   backend:
     name: Backend + Prisma
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: file:./ci.db
     steps:
       - name: Repository checkout
         uses: actions/checkout@v6

@@ -24,6 +24,20 @@ const DEFAULT_SETTINGS: Settings = {
     reminderEmailEnabled: false,
     reminderLeadMinutes: 60,
   },
+  branding: {
+    companyName: '',
+    companyLogoDataUrl: '',
+    quickLinks: [],
+  },
+  backup: {
+    networkBackupEnabled: false,
+    networkBackupPath: '',
+    backupScheduleEnabled: false,
+    backupScheduleType: 'daily',
+    backupScheduleTime: '22:00',
+    backupScheduleDay: 1,
+    backupRetentionDays: 30,
+  },
 };
 
 const DEFAULT_STATE: AppState = {

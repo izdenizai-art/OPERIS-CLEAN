@@ -11,6 +11,8 @@ jobs:
     name: Windows 2022 build + PowerShell + Playwright
     runs-on: windows-2022
     timeout-minutes: 45
+    env:
+      DATABASE_URL: file:./ci.db
     steps:
       - uses: actions/checkout@v6
 

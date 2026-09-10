@@ -164,15 +164,15 @@ function readStoredUsers(): StoredUser[] {
     const parsed = JSON.parse(raw) as StoredUser[];
     if (!Array.isArray(parsed)) return [];
     return parsed.map((user) => ({
-      department: '',
-      title: '',
-      directoryGroups: [],
-      directoryUserPrincipalName: '',
-      theme: 'dark',
-      mustChangePassword: false,
-      directorySource: 'LOCAL',
-      directoryEnabled: false,
       ...user,
+      department: user.department ?? '',
+      title: user.title ?? '',
+      directoryGroups: user.directoryGroups ?? [],
+      directoryUserPrincipalName: user.directoryUserPrincipalName ?? '',
+      theme: user.theme ?? 'dark',
+      mustChangePassword: user.mustChangePassword ?? false,
+      directorySource: user.directorySource ?? 'LOCAL',
+      directoryEnabled: user.directoryEnabled ?? false,
       permissions: user.isAdmin ? ADMIN_PERMISSIONS : normalizePermissions(user.permissions),
     }));
   } catch {
