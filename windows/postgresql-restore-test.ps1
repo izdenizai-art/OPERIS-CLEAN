@@ -1,4 +1,4 @@
-param(
+﻿param(
   [Parameter(Mandatory=$true)][string]$AdminDatabaseUrl,
   [Parameter(Mandatory=$true)][string]$BackupFile,
   [string]$TestDatabaseName = ""
@@ -64,17 +64,17 @@ try {
   $env:PGPASSWORD = $connection.Password
 
   & $createdb.Source `
-    --host=$connection.Host `
-    --port=$connection.Port `
-    --username=$connection.User `
+    --host=$($connection.Host) `
+    --port=$($connection.Port) `
+    --username=$($connection.User) `
     $TestDatabaseName
   if ($LASTEXITCODE -ne 0) { throw "Test DB oluşturulamadı." }
 
   try {
     & $pgRestore.Source `
-      --host=$connection.Host `
-      --port=$connection.Port `
-      --username=$connection.User `
+      --host=$($connection.Host) `
+      --port=$($connection.Port) `
+      --username=$($connection.User) `
       --dbname=$TestDatabaseName `
       --no-owner `
       --no-privileges `
@@ -82,9 +82,9 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Test restore başarısız." }
 
     $tableCount = & $psql.Source `
-      --host=$connection.Host `
-      --port=$connection.Port `
-      --username=$connection.User `
+      --host=$($connection.Host) `
+      --port=$($connection.Port) `
+      --username=$($connection.User) `
       --dbname=$TestDatabaseName `
       -Atqc "SELECT COUNT(*) FROM pg_tables WHERE schemaname='public';"
 
@@ -93,9 +93,9 @@ try {
     }
 
     & $psql.Source `
-      --host=$connection.Host `
-      --port=$connection.Port `
-      --username=$connection.User `
+      --host=$($connection.Host) `
+      --port=$($connection.Port) `
+      --username=$($connection.User) `
       --dbname=$TestDatabaseName `
       -v ON_ERROR_STOP=1 `
       -Atqc 'SELECT 1;' | Out-Null
@@ -106,9 +106,9 @@ try {
     Write-Host "Public table count: $tableCount"
   } finally {
     & $dropdb.Source `
-      --host=$connection.Host `
-      --port=$connection.Port `
-      --username=$connection.User `
+      --host=$($connection.Host) `
+      --port=$($connection.Port) `
+      --username=$($connection.User) `
       --if-exists `
       $TestDatabaseName
   }
