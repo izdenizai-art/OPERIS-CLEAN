@@ -6,6 +6,8 @@ on:
     branches:
       - postgresql-candidate-validation
     paths:
+      - "server/package.json"
+      - "server/package-lock.json"
       - "windows/postgresql-backup.ps1"
       - "windows/postgresql-restore.ps1"
       - "windows/postgresql-restore-test.ps1"

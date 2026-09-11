@@ -48,6 +48,7 @@ jobs:
         shell: pwsh
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
+          node tests/verify-zip-restore-safety.cjs
           node tests/verify-helpdesk-structure.cjs
           node tests/verify-regression-baseline.cjs
           node tests/verify-wtd53-postgresql-contract.cjs
@@ -180,6 +181,9 @@ jobs:
 
       - name: Build image
         run: docker build -t operis-wtd46 .
+
+      - name: Build PostgreSQL candidate image
+        run: docker build -f Dockerfile.postgresql -t operis-postgresql-candidate .
 
       - name: Run container
         shell: bash

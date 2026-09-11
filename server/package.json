@@ -25,7 +25,7 @@
     "nodemailer": "^6.10.1",
     "archiver": "^7.0.1",
     "multer": "^1.4.5-lts.1",
-    "adm-zip": "^0.5.16",
+    "adm-zip": "^0.6.0",
     "qrcode": "^1.5.4",
     "mssql": "^11.0.1",
     "net-snmp": "^3.26.3",
