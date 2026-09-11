@@ -110,7 +110,7 @@ jobs:
       - name: Create SQLite schema
         shell: pwsh
         working-directory: server
-        run: npx prisma db push --schema prisma/schema.sqlite.prisma --skip-generate
+        run: npm run prisma:push -- --skip-generate
 
       - name: Install Playwright Chromium
         shell: pwsh
@@ -137,6 +137,8 @@ jobs:
               Start-Sleep -Seconds 1
             }
             if (-not $ready) { throw "OPERIS health endpoint hazır olmadı." }
+            node tests/windows/verify-runtime-health.cjs
+            if ($LASTEXITCODE -ne 0) { throw "Windows runtime health doğrulaması başarısız." }
             npx playwright test tests/e2e/operis-smoke.spec.cjs --reporter=line
             if ($LASTEXITCODE -ne 0) { throw "Playwright smoke başarısız." }
           } finally {

@@ -6,6 +6,8 @@ on:
     branches:
       - postgresql-candidate-validation
     paths:
+      - "tests/windows/**"
+      - ".github/workflows/operis-wtd46-ci.yml"
       - "server/package.json"
       - "server/package-lock.json"
       - "windows/**"
