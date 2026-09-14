@@ -10,8 +10,35 @@ $TaskName = 'OperisEnterpriseServer'
 $BackupTaskName = 'OperisEnterpriseDailyBackup'
 
 function Invoke-SetupExe {
-    $p = Start-Process -FilePath $SetupExe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-' -Wait -PassThru
+    $processName = [IO.Path]::GetFileNameWithoutExtension($SetupExe)
+    $setupLog = Join-Path $env:RUNNER_TEMP ("$processName-$([guid]::NewGuid().ToString('N')).log")
+    $p = Start-Process -FilePath $SetupExe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',("/LOG=$setupLog") -Wait -PassThru
     if ($p.ExitCode -ne 0) { throw "Setup EXE failed: exit=$($p.ExitCode)" }
+
+    $deadline = (Get-Date).AddMinutes(30)
+    do {
+        $remaining = @(Get-Process -Name $processName -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne $PID })
+        if ($remaining.Count -eq 0) { break }
+        foreach ($child in $remaining) {
+            try { Wait-Process -Id $child.Id -Timeout 5 -ErrorAction SilentlyContinue } catch {}
+        }
+    } while ((Get-Date) -lt $deadline)
+
+    if ((Get-Date) -ge $deadline) { throw 'Setup child process completion timeout.' }
+
+    $bindingPath = Join-Path $InstallRoot 'Data\NetworkBinding.json'
+    while (-not (Test-Path $bindingPath) -and (Get-Date) -lt $deadline) {
+        Start-Sleep -Seconds 2
+    }
+    if (-not (Test-Path $bindingPath)) {
+        foreach ($log in @($setupLog, (Join-Path $InstallRoot 'Logs\Install.log'), (Join-Path $InstallRoot 'Logs\Install-Transcript.log'))) {
+            if (Test-Path $log) {
+                Write-Host "===== $log ====="
+                Get-Content $log -Tail 200 -ErrorAction SilentlyContinue
+            }
+        }
+        throw 'Setup completed without NetworkBinding.json.'
+    }
 }
 function Get-Binding {
     $path = Join-Path $InstallRoot 'Data\NetworkBinding.json'
@@ -23,7 +50,7 @@ function Assert-Health {
     $last = $null
     for ($i=0; $i -lt 30; $i++) {
         try {
-            $h = Invoke-RestMethod -Uri "http://$($binding.ip):$($binding.port)/api/health" -TimeoutSec 5
+            $h = Invoke-RestMethod -Uri "http://$($binding.ipAddress):$($binding.port)/api/health" -TimeoutSec 5
             if ($h.ok -and $h.version -eq '6.3.63' -and $h.database.provider -eq 'postgresql' -and $h.database.connected) { return $h }
             $last = $h | ConvertTo-Json -Compress
         } catch { $last = $_.Exception.Message }
