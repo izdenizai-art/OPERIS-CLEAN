@@ -11,7 +11,7 @@ permissions:
 jobs:
   first-install-exe:
     runs-on: windows-2022
-    timeout-minutes: 25
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
 
@@ -24,26 +24,41 @@ jobs:
           & $iscc .\installer\OPERIS.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed: $LASTEXITCODE" }
 
-      - name: Run first-install EXE and expose failure immediately
+      - name: Run bounded first-install EXE diagnostic
         shell: pwsh
         run: |
           $exe = (Resolve-Path '.\dist\installer\OPERIS_Setup_v6.3.63.exe').Path
+          $processName = [IO.Path]::GetFileNameWithoutExtension($exe)
           $setupLog = Join-Path $env:RUNNER_TEMP 'operis-release-smoke-setup.log'
-          $p = Start-Process -FilePath $exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',("/LOG=$setupLog") -Wait -PassThru
-          Write-Host "SETUP_EXIT=$($p.ExitCode)"
-          if ($p.ExitCode -ne 0) {
-            foreach ($log in @($setupLog, 'C:\ProgramData\Operis\Logs\Install.log', 'C:\ProgramData\Operis\Logs\Install-Transcript.log')) {
-              if (Test-Path $log) { Write-Host "===== $log ====="; Get-Content $log -Tail 250 }
-            }
-            throw "Setup EXE failed: exit=$($p.ExitCode)"
-          }
           $binding = 'C:\ProgramData\Operis\Data\NetworkBinding.json'
-          for ($i=0; $i -lt 60 -and -not (Test-Path $binding); $i++) { Start-Sleep -Seconds 2 }
-          if (-not (Test-Path $binding)) {
-            foreach ($log in @($setupLog, 'C:\ProgramData\Operis\Logs\Install.log', 'C:\ProgramData\Operis\Logs\Install-Transcript.log')) {
-              if (Test-Path $log) { Write-Host "===== $log ====="; Get-Content $log -Tail 250 }
+          $logs = @($setupLog, 'C:\ProgramData\Operis\Logs\Install.log', 'C:\ProgramData\Operis\Logs\Install-Transcript.log')
+          function Show-DiagnosticLogs {
+            foreach ($log in $logs) {
+              if (Test-Path $log) {
+                Write-Host "===== $log ====="
+                Get-Content $log -Tail 200 -ErrorAction SilentlyContinue
+              }
             }
-            throw 'NetworkBinding.json missing after successful setup exit.'
+          }
+          $p = Start-Process -FilePath $exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',("/LOG=$setupLog") -PassThru
+          $deadline = (Get-Date).AddMinutes(6)
+          $nextDump = (Get-Date).AddSeconds(45)
+          while ((Get-Date) -lt $deadline -and -not (Test-Path $binding)) {
+            if ($p.HasExited -and $p.ExitCode -ne 0) {
+              Show-DiagnosticLogs
+              throw "Setup EXE failed: exit=$($p.ExitCode)"
+            }
+            if ((Get-Date) -ge $nextDump) {
+              Write-Host "DIAGNOSTIC_HEARTBEAT processExited=$($p.HasExited) binding=$([bool](Test-Path $binding))"
+              Show-DiagnosticLogs
+              $nextDump = (Get-Date).AddSeconds(45)
+            }
+            Start-Sleep -Seconds 5
+          }
+          if (-not (Test-Path $binding)) {
+            Show-DiagnosticLogs
+            Get-Process -Name $processName -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+            throw 'NetworkBinding.json missing after six-minute bounded setup diagnostic.'
           }
           $b = Get-Content $binding -Raw | ConvertFrom-Json
           $ok = $false
@@ -56,7 +71,10 @@ jobs:
             } catch { $last = $_.Exception.Message }
             Start-Sleep -Seconds 2
           }
-          if (-not $ok) { throw "Health failed: $last" }
+          if (-not $ok) {
+            Show-DiagnosticLogs
+            throw "Health failed: $last"
+          }
           Write-Output 'RELEASE_FIRST_INSTALL_EXE_SMOKE_PASS'
 
       - name: Upload diagnostic logs
