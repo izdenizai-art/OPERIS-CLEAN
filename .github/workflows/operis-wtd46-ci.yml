@@ -267,3 +267,26 @@ jobs:
           name: operis-postgresql-provision-evidence
           path: ${{ runner.temp }}/operis-provision-evidence
           if-no-files-found: warn
+
+  windows-enterprise-postgresql:
+    name: Enterprise installer PostgreSQL (${{ matrix.scenario }})
+    runs-on: windows-2022
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: [clean, legacy]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24.21.0'
+      - name: Main installer, migration, reinstall, backup and isolated restore
+        shell: pwsh
+        run: ./tests/windows/enterprise-postgresql-integration.ps1 -Scenario ${{ matrix.scenario }}
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: operis-enterprise-postgresql-${{ matrix.scenario }}
+          path: ${{ runner.temp }}/operis-installer-evidence
+          if-no-files-found: warn

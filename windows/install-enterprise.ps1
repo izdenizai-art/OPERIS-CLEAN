@@ -27,6 +27,7 @@ $script:PreservedSettingsEnv = $null
 $ExternalImportRoot = Join-Path $SourceRoot "IMPORT_CONFIG"
 
 $ServerConfigFile = Join-Path $SourceRoot "OPERIS_SERVER_CONFIG.ini"
+. (Join-Path $PSScriptRoot "installer-postgresql.ps1")
 
 
 function Test-Administrator {
@@ -115,10 +116,12 @@ function Get-InstallMode {
 }
 
 function Create-RollbackSnapshot {
-    if ($script:InstallMode -eq "NEW" -or -not (Test-Path $InstallRoot)) { return }
+    $snapshotSource = if ($script:DatabaseState) { $script:DatabaseState.Root } else { $InstallRoot }
+    if (-not $script:DatabaseState -and $script:InstallMode -eq "NEW") { return }
+    if (-not (Test-Path $snapshotSource)) { return }
 
-    $versionFile = Join-Path $InstallRoot "VERSION.txt"
-    $serverFile = Join-Path $InstallRoot "server\dist\index.js"
+    $versionFile = Join-Path $snapshotSource "VERSION.txt"
+    $serverFile = Join-Path $snapshotSource "server\dist\index.js"
 
     if (-not (Test-Path $versionFile) -or -not (Test-Path $serverFile)) {
         Write-Log "Kurulum eksik veya onarım durumunda. Uygulama dosyası geri alma kopyası atlandı; veritabanı ayrıca korunacak." "WARN"
@@ -130,9 +133,10 @@ function Create-RollbackSnapshot {
     $script:RollbackRoot = Join-Path $env:TEMP "Operis-Rollback-$stamp"
     New-Item -ItemType Directory -Path $script:RollbackRoot -Force | Out-Null
 
+    Protect-OperisPrivatePath $script:RollbackRoot
     Write-Log "Çalışan sürüm geri alma için kopyalanıyor: $script:RollbackRoot"
-    & robocopy.exe $InstallRoot $script:RollbackRoot /E /COPY:DAT /DCOPY:T /R:2 /W:1 `
-        /XD (Join-Path $InstallRoot "Backups") (Join-Path $InstallRoot "Logs") | Out-Null
+    & robocopy.exe $snapshotSource $script:RollbackRoot /E /COPY:DAT /DCOPY:T /R:2 /W:1 `
+        /XD (Join-Path $snapshotSource "Backups") (Join-Path $snapshotSource "Logs") | Out-Null
     if ($LASTEXITCODE -ge 8) {
         throw "Geri alma kopyası oluşturulamadı. Robocopy kodu: $LASTEXITCODE"
     }
@@ -142,7 +146,7 @@ function Create-RollbackSnapshot {
         mode = $script:InstallMode
         previousVersion = $script:PreviousVersion
         targetVersion = $Version
-        source = $InstallRoot
+        source = $snapshotSource
     } | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $script:RollbackRoot "rollback-manifest.json") -Encoding UTF8
 }
 
@@ -173,6 +177,9 @@ function Restore-RollbackSnapshot {
             if (Test-Path $candidate) { $script:NodePath = $candidate }
         }
 
+        if ($script:PreUpgradePostgresDump) {
+            & (Join-Path $SourceRoot 'windows\postgresql-restore.ps1') -DatabaseUrl $script:Postgres.DatabaseUrl -BackupFile $script:PreUpgradePostgresDump -ConfirmRestore YES
+        }
         Install-Runner
         Start-ScheduledTask -TaskName $TaskName
         Write-Log "Önceki sürüm geri yüklendi." "WARN"
@@ -295,8 +302,8 @@ function Install-NodeFromOfficialMsi {
             throw "Node.js kuruldu ancak node.exe bulunamadı. Windows'u yeniden başlatıp Operis kurulumunu tekrar çalıştırın."
         }
 
-        $major = [int]((& $node --version).TrimStart("v").Split(".")[0])
-        if ($major -ne 24) {
+        $nodeVersion = (& $node --version).Trim()
+        if ($nodeVersion -ne 'v24.21.0') {
             throw "Kurulan Node.js sürümü desteklenmiyor: $(& $node --version)"
         }
 
@@ -317,8 +324,8 @@ function Install-NodeFromOfficialMsi {
 function Ensure-Node {
     $node = Find-Node
     if ($node) {
-        $major = [int]((& $node --version).TrimStart("v").Split(".")[0])
-        if ($major -eq 24) { return $node }
+        $nodeVersion = (& $node --version).Trim()
+        if ($nodeVersion -eq 'v24.21.0') { return $node }
         Write-Log "Node.js sürümü desteklenen aralıkta değil: $(& $node --version)" "WARN"
     }
 
@@ -333,8 +340,8 @@ function Ensure-Node {
         $node = Find-Node
 
         if ($wingetExit -eq 0 -and $node) {
-            $major = [int]((& $node --version).TrimStart("v").Split(".")[0])
-            if ($major -eq 24) {
+            $nodeVersion = (& $node --version).Trim()
+            if ($nodeVersion -eq 'v24.21.0') {
                 Write-Log "Node.js Winget kurulumu başarılı: $(& $node --version)"
                 return $node
             }
@@ -795,6 +802,8 @@ $NodePath = (Get-Content $NodePathFile -Raw).Trim()
 if (-not (Test-Path $NodePath)) { Add-Content $LogFile "$(Get-Date -Format o) node.exe missing: $NodePath"; exit 3 }
 if (-not (Test-Path $ServerFile)) { Add-Content $LogFile "$(Get-Date -Format o) server file missing: $ServerFile"; exit 4 }
 Set-Location $InstallRoot
+$env:DOTENV_CONFIG_PATH = Join-Path $InstallRoot "server\.env"
+$env:OPERIS_DATA_DIR = Join-Path $InstallRoot "Data"
 Add-Content $LogFile "$(Get-Date -Format o) Operis server starting"
 & $NodePath $ServerFile *>> $LogFile
 $exitCode = $LASTEXITCODE
@@ -822,36 +831,13 @@ exit $exitCode
 }
 
 function Install-DailyBackup {
-    $script = @'
-$ErrorActionPreference = "Stop"
-$Root = Join-Path $env:ProgramData "Operis"
-$Source = Join-Path $Root "server\prisma\yaklasan-isler.db"
-$DestinationRoot = Join-Path $Root "Backups"
-$Log = Join-Path $Root "Logs\Backup.log"
-New-Item -ItemType Directory -Path $DestinationRoot -Force | Out-Null
-if (-not (Test-Path $Source)) { Add-Content $Log "$(Get-Date -Format o) Database not found"; exit 0 }
-$stamp = Get-Date -Format "yyyyMMdd-HHmmss"
-$folder = Join-Path $DestinationRoot "Daily-$stamp"
-New-Item -ItemType Directory -Path $folder -Force | Out-Null
-Copy-Item $Source (Join-Path $folder "yaklasan-isler.db") -Force
-$envFile = Join-Path $Root "server\.env"
-if (Test-Path $envFile) { Copy-Item $envFile (Join-Path $folder "server.env") -Force }
-$helpDeskAttachments = Join-Path $Root "Data\helpdesk-attachments"
-if (Test-Path $helpDeskAttachments) {
-    Copy-Item $helpDeskAttachments (Join-Path $folder "helpdesk-attachments") -Recurse -Force
-}
-$hash = (Get-FileHash (Join-Path $folder "yaklasan-isler.db") -Algorithm SHA256).Hash
-Set-Content (Join-Path $folder "SHA256.txt") $hash -Encoding ASCII
-Get-ChildItem $DestinationRoot -Directory | Where-Object Name -like "Daily-*" |
-    Sort-Object CreationTime -Descending | Select-Object -Skip 30 | Remove-Item -Recurse -Force
-Add-Content $Log "$(Get-Date -Format o) Backup completed: $folder"
-'@
-    Set-Content (Join-Path $InstallRoot "windows\daily-backup.ps1") $script -Encoding UTF8
-    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$InstallRoot\windows\daily-backup.ps1`""
+    $backupScript = Join-Path $InstallRoot 'windows\postgresql-daily-backup.ps1'
+    if (-not (Test-Path $backupScript)) { throw 'PostgreSQL daily backup script missing.' }
+    $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$backupScript`""
     $trigger = New-ScheduledTaskTrigger -Daily -At 22:00
     $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 2)
-    $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
-    Register-ScheduledTask -TaskName $BackupTaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description "$ProductName günlük yedekleme" -Force | Out-Null
+    $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+    Register-ScheduledTask -TaskName $BackupTaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description "$ProductName PostgreSQL günlük yedekleme" -Force | Out-Null
 }
 
 function Install-FirewallRule {
@@ -923,7 +909,7 @@ function Verify-Installation {
     for ($attempt = 1; $attempt -le 30; $attempt++) {
         try {
             $health = Invoke-RestMethod -Uri "http://$($script:SelectedIPv4):$Port/api/health" -TimeoutSec 5
-            if ($health.ok -and $health.version -eq $Version) {
+            if ($health.ok -and $health.version -eq $Version -and $health.database.provider -eq "postgresql" -and $health.database.connected) {
                 Write-Log "Sağlık kontrolü başarılı. Sürüm: $($health.version)"
                 return
             }
@@ -960,57 +946,8 @@ try {
     Write-Step "Kurulum modu belirleniyor"
     Write-Log "Kurulum modu: $script:InstallMode | Önceki sürüm: $script:PreviousVersion | Hedef sürüm: $Version"
 
-    if ($forceCleanInstall -and $script:InstallMode -ne "NEW") {
-        Write-Log "Sıfır kurulum paketi aktif. Mevcut OPERİS kurulumu güvenli yedek sonrası temizlenecek." "WARN"
-
-        Write-Step "Sıfır kurulum öncesi mevcut bağlantı ayarları korunuyor"
-        Capture-PreservedSettings
-
-        Write-Step "Sıfır kurulum öncesi mevcut OPERİS yedekleniyor"
-        Write-Log "Start-Transcript tarafından kullanılan Logs klasörü yedek dışında bırakılır; aktif log dosyası kilit hatası oluşturmaz."
-        $cleanBackupStamp = Get-Date -Format "yyyyMMdd-HHmmss"
-        $cleanBackupBase = Join-Path $env:ProgramData "Operis-Installer-Backups"
-        $cleanBackupRoot = Join-Path $cleanBackupBase "BeforeCleanInstall-$cleanBackupStamp"
-        New-Item -ItemType Directory -Path $cleanBackupRoot -Force | Out-Null
-
-        if (Test-Path $InstallRoot) {
-            $robocopyExcludeDirs = @(
-                (Join-Path $InstallRoot "Logs"),
-                (Join-Path $InstallRoot "node_modules"),
-                (Join-Path $InstallRoot "server\node_modules"),
-                (Join-Path $InstallRoot "dist"),
-                (Join-Path $InstallRoot "server\dist"),
-                (Join-Path $InstallRoot "server\public"),
-                (Join-Path $InstallRoot "Backups")
-            )
-
-            & robocopy.exe $InstallRoot $cleanBackupRoot /E /COPY:DAT /DCOPY:T /R:1 /W:1 `
-                /XD $robocopyExcludeDirs `
-                /XF "Install.log" "Install-Transcript.log" "Server.log" "Backup.log" `
-                | Out-Null
-
-            if ($LASTEXITCODE -ge 8) {
-                throw "Sıfır kurulum öncesi mevcut OPERİS yedeği alınamadı. Robocopy kodu: $LASTEXITCODE"
-            }
-
-            Write-Log "Sıfır kurulum yedeği tamamlandı. Çalışan loglar, node_modules ve yeniden üretilebilir build klasörleri yedeğe dahil edilmedi."
-        }
-
-        Stop-OperisRuntime
-
-        if (Test-Path $InstallRoot) {
-            # Start-Transcript bu işlem boyunca $LogsRoot\Install-Transcript.log dosyasını açık tutar.
-            # Temiz kurulumda Logs/Backups/Data korunur; yalnız uygulama payload'ı silinir.
-            # Böylece aktif transcript dosyası hiçbir zaman Remove-Item hedefi olmaz.
-            Get-ChildItem $InstallRoot -Force |
-                Where-Object { $_.Name -notin @("Logs", "Backups", "Data") } |
-                Remove-Item -Recurse -Force -ErrorAction Stop
-        }
-
-        $script:InstallMode = "NEW"
-        $script:PreviousVersion = ""
-        $script:RollbackRoot = $null
-        Write-Log "Sıfır kurulum modu etkinleştirildi. Yeni ve boş OPERİS kurulumu yapılacak."
+    if ($forceCleanInstall -and ((Find-OperisDatabaseState) -or (Test-Path (Join-Path $InstallRoot 'VERSION.txt')))) {
+        throw "Mevcut kurulumda FORCE_CLEAN_INSTALL veri güvenliği için reddedildi; mevcut veriler korunuyor."
     }
 
     if (-not $script:PreservedSettingsRoot -and (Test-Path $ExternalImportRoot)) {
@@ -1026,18 +963,31 @@ try {
     $script:NodePath = Ensure-Node
     Write-Log "Node.js: $(& $script:NodePath --version)"
 
-    Write-Step "Geri alma kopyası hazırlanıyor"
-    Create-RollbackSnapshot
-
+    $script:DatabaseState = Find-OperisDatabaseState
     Write-Step "Mevcut Operis durduruluyor"
     Stop-OperisRuntime
+    if (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue) {
+        throw "Runtime durdurulamadı; veri yedekleme ve geçiş yapılmadı."
+    }
+    Write-Step "Tutarlı geçiş yedeği ve geri alma kopyası hazırlanıyor"
+    Save-OperisPreCutover
+    Create-RollbackSnapshot
+    Write-Step "PostgreSQL otomatik kurulum ve hedef doğrulama"
+    Prepare-OperisPostgresql
 
     Write-Step "Kurulum öncesi güvenli yedek alınıyor"
     $backupFolder = Backup-ExistingInstallation
+    if ($script:SQLiteMigrationSource) { Copy-Item $script:SQLiteMigrationSource (Join-Path $backupFolder 'yaklasan-isler.db') -Force }
+    if (Test-Path (Join-Path $script:PreCutoverRoot 'server.env')) {
+        Copy-Item (Join-Path $script:PreCutoverRoot 'server.env') (Join-Path $backupFolder 'server.env') -Force
+    }
 
     Write-Step "Uygulama dosyaları C:\ProgramData\Operis dizinine kuruluyor"
     Copy-ApplicationFiles $backupFolder
     Ensure-Directories
+    if ($script:DatabaseState -and $script:DatabaseState.Root -ne $InstallRoot -and (Test-Path (Join-Path $script:PreCutoverRoot 'Data'))) {
+        Copy-Item (Join-Path $script:PreCutoverRoot 'Data\*') $DataRoot -Recurse -Force
+    }
 
     Write-Step "Bağımlılıklar kuruluyor"
     if (Test-Path (Join-Path $InstallRoot "package-lock.json")) {
@@ -1055,8 +1005,7 @@ try {
     Ensure-EnvironmentFile
 
     Write-Step "Veritabanı ve Prisma istemcisi hazırlanıyor"
-    Invoke-Npm (Join-Path $InstallRoot "server") @("run", "prisma:generate")
-    Invoke-Npm (Join-Path $InstallRoot "server") @("run", "prisma:push")
+    Initialize-OperisPostgresql
 
     Write-Step "Mevcut mail ve veritabanı bağlantıları aktarılıyor"
     Import-PreservedSettings
@@ -1082,6 +1031,8 @@ try {
 
     Write-Step "Dosya izinleri sıkılaştırılıyor"
     Set-EnterprisePermissions
+    Protect-OperisPrivatePath (Join-Path $InstallRoot "server\.env")
+    Protect-OperisPrivatePath $BackupsRoot
 
     Write-Step "Kurulum doğrulanıyor"
     Verify-Installation

@@ -68,6 +68,8 @@ try {
     --port=$($connection.Port) `
     --username=$($connection.User) `
     --dbname=$($connection.Database) `
+    --single-transaction `
+    --exit-on-error `
     --clean `
     --if-exists `
     --no-owner `

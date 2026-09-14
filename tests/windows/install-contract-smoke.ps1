@@ -10,7 +10,7 @@ foreach ($required in @($installer,$config,$diagnostic,$versionFile)) {
     if (-not (Test-Path $required)) { throw "Zorunlu kurulum dosyası yok: $required" }
 }
 
-$installerText = Get-Content $installer -Raw
+$installerText = (Get-Content $installer -Raw) + (Get-Content (Join-Path $repo 'windows\installer-postgresql.ps1') -Raw)
 $configText = Get-Content $config -Raw
 $diagnosticText = Get-Content $diagnostic -Raw
 $version = (Get-Content $versionFile -Raw).Trim()
@@ -22,6 +22,7 @@ $assertions = [ordered]@{
     ServerTask = ($installerText -match '\$TaskName\s*=\s*"OperisEnterpriseServer"')
     BackupTask = ($installerText -match '\$BackupTaskName\s*=\s*"OperisEnterpriseDailyBackup"')
     Port = ($installerText -match '\$Port\s*=\s*3001')
+    PostgreSQLIntegration = ((Get-Content $installer -Raw) -match '(?m)^    Initialize-OperisPostgresql\s*$')
     PrismaGenerate = ($installerText -match 'prisma:generate')
     PrismaPush = ($installerText -match 'prisma:push')
     Build = ($installerText -match '@\("run",\s*"build"\)')

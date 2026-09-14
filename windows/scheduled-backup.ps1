@@ -5,6 +5,13 @@
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'installer-postgresql.ps1')
+$currentUrl = Read-OperisDatabaseUrl (Join-Path $env:ProgramData 'Operis\server\.env')
+if ($currentUrl -match '^postgres(ql)?://') {
+    & (Join-Path $PSScriptRoot 'postgresql-daily-backup.ps1') -RetentionDays $RetentionDays -NetworkEnabled $NetworkEnabled -NetworkPath $NetworkPath
+    return
+}
+
 $root = Join-Path $env:ProgramData "Operis"
 $server = Join-Path $root "server"
 $db = Join-Path $server "prisma\yaklasan-isler.db"

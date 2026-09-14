@@ -34,7 +34,7 @@ const manifestPath = `${backupDb}.manifest.json`;
 const quoteSql = value => `'${String(value).replaceAll("'", "''")}'`;
 const sha256 = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 
-const db = new DatabaseSync(sourceDb, { readOnly: false });
+const db = new DatabaseSync(sourceDb, { readOnly: true });
 try {
   const integrity = db.prepare('PRAGMA integrity_check').get();
   if (!integrity || integrity.integrity_check !== 'ok') {
