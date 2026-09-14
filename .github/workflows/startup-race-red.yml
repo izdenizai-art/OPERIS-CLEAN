@@ -1,0 +1,17 @@
+name: Startup Singleton RED
+
+on:
+  push:
+    branches: [ startup-race-red ]
+
+jobs:
+  red:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24.21.0'
+      - name: AppSettings singleton bootstrap contract
+        shell: pwsh
+        run: node tests/windows/startup-appsettings-singleton-contract.cjs
