@@ -12,7 +12,13 @@ $BackupTaskName = 'OperisEnterpriseDailyBackup'
 function Invoke-SetupExe {
     $processName = [IO.Path]::GetFileNameWithoutExtension($SetupExe)
     $setupLog = Join-Path $env:RUNNER_TEMP ("$processName-$([guid]::NewGuid().ToString('N')).log")
-    $p = Start-Process -FilePath $SetupExe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',("/LOG=$setupLog") -Wait -PassThru
+    $p = Start-Process -FilePath $SetupExe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',("/LOG=$setupLog") -PassThru
+    $setupTimeoutMs = 30 * 60 * 1000
+    if (-not $p.WaitForExit($setupTimeoutMs)) {
+        try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch {}
+        throw 'Setup EXE process timeout.'
+    }
+    $p.Refresh()
     if ($p.ExitCode -ne 0) { throw "Setup EXE failed: exit=$($p.ExitCode)" }
 
     $deadline = (Get-Date).AddMinutes(30)
