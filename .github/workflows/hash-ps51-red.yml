@@ -1,0 +1,12 @@
+name: Hash PS51 RED
+on:
+  push:
+    branches: [ hash-ps51-red ]
+jobs:
+  red:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run PowerShell 5.1 SHA256 contract
+        shell: pwsh
+        run: ./tests/windows/sha256-powershell51-smoke.ps1
