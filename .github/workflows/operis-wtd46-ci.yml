@@ -251,3 +251,19 @@ jobs:
           name: operis-docker-ci-diagnostics
           path: /tmp/operis-docker-diagnostics
           if-no-files-found: warn
+
+  windows-postgresql-provision:
+    name: Windows automatic PostgreSQL provisioning and reuse
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install PostgreSQL automatically and verify reuse without data loss
+        shell: pwsh
+        run: ./tests/windows/postgresql-provision-smoke.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: operis-postgresql-provision-evidence
+          path: ${{ runner.temp }}/operis-provision-evidence
+          if-no-files-found: warn
