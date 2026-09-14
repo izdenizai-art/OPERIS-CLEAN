@@ -96,12 +96,6 @@ function Initialize-OperisPostgresql {
     Invoke-Npm (Join-Path $InstallRoot 'server') @('run','prisma:push')
     $psql = Join-Path $script:Postgres.Bin 'psql.exe'
     $uri = [Uri]$script:Postgres.DatabaseUrl
-    $oldPassword = $env:PGPASSWORD
-    try {
-        $env:PGPASSWORD = [Uri]::UnescapeDataString($uri.UserInfo.Split(':',2)[1])
-        & $psql -X -w -h $uri.Host -p $uri.Port -U operis -d operis -v ON_ERROR_STOP=1 -f (Join-Path $InstallRoot 'migration\postgresql-custom.sql') | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw 'PostgreSQL özel indeksleri hazırlanamadı.' }
-    } finally { $env:PGPASSWORD = $oldPassword }
     if ($script:SQLiteMigrationSource) {
         $env:OPERIS_CONFIRM_SQLITE_MIGRATION='YES'
         $env:OPERIS_SQLITE_MIGRATION_SOURCE=$script:SQLiteMigrationSource
@@ -110,6 +104,12 @@ function Initialize-OperisPostgresql {
         & $script:NodePath (Join-Path $InstallRoot 'server\scripts\migrate-sqlite-windows.mjs')
         if ($LASTEXITCODE -ne 0) { throw 'SQLite migration doğrulanamadı; provider değiştirilmedi.' }
     }
+    $oldPassword = $env:PGPASSWORD
+    try {
+        $env:PGPASSWORD = [Uri]::UnescapeDataString($uri.UserInfo.Split(':',2)[1])
+        & $psql -X -w -h $uri.Host -p $uri.Port -U operis -d operis -v ON_ERROR_STOP=1 -f (Join-Path $InstallRoot 'migration\postgresql-custom.sql') | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'PostgreSQL özel indeksleri hazırlanamadı.' }
+    } finally { $env:PGPASSWORD = $oldPassword }
     # Switch only after migration and full-row verification. Keep the original env in PreCutover.
     $target = Join-Path $InstallRoot 'server\.env'
     $text = Get-Content $target -Raw
