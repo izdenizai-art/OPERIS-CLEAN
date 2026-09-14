@@ -3,6 +3,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'sha256-compat.ps1')
 
 if (-not (Test-Path $BackupZip)) {
   throw "Backup ZIP bulunamadı: $BackupZip"

@@ -1,0 +1,32 @@
+name: Runtime Final Fix Validation
+
+on:
+  push:
+    branches: [ runtime-final-fix ]
+
+jobs:
+  ps51-and-startup-contracts:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24.21.0'
+      - name: PowerShell 5.1 SHA256 compatibility
+        shell: powershell
+        run: ./tests/windows/hash-ps51-contract.ps1
+      - name: AppSettings singleton bootstrap
+        shell: pwsh
+        run: node tests/windows/startup-appsettings-singleton-contract.cjs
+
+  clean-install-runtime:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24.21.0'
+      - name: Enterprise clean install, reinstall, backup and restore
+        shell: pwsh
+        run: ./tests/windows/enterprise-postgresql-integration.ps1 -Scenario clean

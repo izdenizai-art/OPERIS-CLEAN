@@ -2,6 +2,9 @@ param(
     [Parameter(Mandatory = $true)][string]$PayloadRoot
 )
 $ErrorActionPreference = 'Stop'
+$hashCompat = Join-Path $PayloadRoot 'windows\sha256-compat.ps1'
+if (-not (Test-Path $hashCompat)) { throw "SHA256 uyumluluk katmanı bulunamadı: $hashCompat" }
+. $hashCompat
 $configPath = Join-Path $PayloadRoot 'OPERIS_SERVER_CONFIG.ini'
 if (-not (Test-Path $configPath)) { throw "OPERIS_SERVER_CONFIG.ini bulunamadı: $configPath" }
 $config = Get-Content $configPath -Raw

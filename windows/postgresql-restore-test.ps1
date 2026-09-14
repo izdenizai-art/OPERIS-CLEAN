@@ -5,6 +5,7 @@
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'sha256-compat.ps1')
 
 function Parse-PostgresUrl([string]$Url) {
   $uri = [System.Uri]$Url

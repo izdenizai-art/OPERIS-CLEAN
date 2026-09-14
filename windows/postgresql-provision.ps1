@@ -1,5 +1,6 @@
 # PostgreSQL provisioning module. Dot-source, then call Ensure-OperisPostgresql.
 # Vendor command options: https://www.enterprisedb.com/docs/supported-open-source/postgresql/installing/command_line_parameters/
+. (Join-Path $PSScriptRoot 'sha256-compat.ps1')
 function Ensure-OperisPostgresql {
     param(
         [string]$Root = (Join-Path $env:ProgramData 'OperisPostgreSQL'),
@@ -108,7 +109,6 @@ function Ensure-OperisPostgresql {
         & $psql -X -w -h 127.0.0.1 -p $DatabasePort -U operis -d operis -v ON_ERROR_STOP=1 -c 'SELECT 1' | Out-Null
         if ($LASTEXITCODE -ne 0) { throw 'Application database connection failed.' }
     } finally { $env:PGPASSWORD = $oldPassword }
-    # Caller must keep this URL out of logs/artifacts and store it with restricted access.
     return [pscustomobject]@{
         Bin = $bin; Service = $ServiceName; Port = $DatabasePort; Root = $Root
         DatabaseUrl = "postgresql://operis:$($state.appPassword)@127.0.0.1:$DatabasePort/operis?schema=public"

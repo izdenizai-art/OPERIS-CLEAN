@@ -1,4 +1,5 @@
 # Shared by the existing enterprise installer; no entry-point side effects.
+. (Join-Path $PSScriptRoot 'sha256-compat.ps1')
 . (Join-Path $PSScriptRoot 'postgresql-provision.ps1')
 
 function Protect-OperisPrivatePath([string]$Path) {

@@ -5,6 +5,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'sha256-compat.ps1')
 
 $serverRoot = Join-Path $InstallRoot "server"
 $prismaRoot = Join-Path $serverRoot "prisma"

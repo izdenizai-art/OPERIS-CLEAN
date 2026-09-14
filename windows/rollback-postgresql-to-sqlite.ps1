@@ -5,6 +5,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'sha256-compat.ps1')
 
 if (-not (Test-Path $BackupDb)) {
   throw "SQLite rollback yedeği bulunamadı: $BackupDb"

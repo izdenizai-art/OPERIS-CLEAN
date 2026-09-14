@@ -5,6 +5,7 @@ param(
     [string]$NetworkPath = ''
 )
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'sha256-compat.ps1')
 . (Join-Path $PSScriptRoot 'installer-postgresql.ps1')
 $url = Read-OperisDatabaseUrl (Join-Path $Root 'server\.env')
 if ($url -notmatch '^postgres(ql)?://') { throw 'PostgreSQL backup requires an active PostgreSQL configuration.' }
