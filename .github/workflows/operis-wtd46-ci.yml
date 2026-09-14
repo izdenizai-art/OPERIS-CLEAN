@@ -171,7 +171,7 @@ jobs:
           npm --version | Out-File (Join-Path $diag "npm-version.txt") -Encoding UTF8
           Get-ChildItem server/prisma -Force | Out-String | Out-File (Join-Path $diag "prisma-files.txt") -Encoding UTF8
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: operis-windows-ci-diagnostics
@@ -245,7 +245,7 @@ jobs:
           docker logs operis-wtd46 > /tmp/operis-docker-diagnostics/container.log 2>&1 || true
           docker inspect --format '{{json .State}}' operis-wtd46 > /tmp/operis-docker-diagnostics/container-state.json 2>&1 || true
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: operis-docker-ci-diagnostics
@@ -261,7 +261,7 @@ jobs:
       - name: Install PostgreSQL automatically and verify reuse without data loss
         shell: pwsh
         run: ./tests/windows/postgresql-provision-smoke.ps1
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: operis-postgresql-provision-evidence
