@@ -1,0 +1,72 @@
+name: Runtime Debug Clean Installer
+
+on:
+  push:
+    branches: [ runtime-debug-bc785 ]
+
+jobs:
+  debug-clean:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24.21.0'
+      - name: Run clean installer with diagnostics
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Continue'
+          $source=Join-Path $env:RUNNER_TEMP 'OperisInstallerSource'
+          $archive=Join-Path $env:RUNNER_TEMP 'operis-source.zip'
+          git archive --format=zip --output=$archive HEAD
+          Expand-Archive $archive $source
+          $root=Join-Path $env:ProgramData 'Operis'
+          if (Test-Path $root) { throw 'Expected clean root.' }
+          $ip=Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' -and $_.AddressState -eq 'Preferred' } | Select-Object -First 1
+          if (-not $ip) { throw 'No IPv4.' }
+          Set-Content (Join-Path $source 'OPERIS_SERVER_CONFIG.ini') "BIND_IP=$($ip.IPAddress)`nFORCE_CLEAN_INSTALL=NO"
+          $info=[Diagnostics.ProcessStartInfo]::new()
+          $info.FileName='powershell.exe'
+          $info.UseShellExecute=$false
+          $null=$info.Environment.Remove('PSModulePath')
+          foreach ($argument in @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',(Join-Path $source 'windows\install-enterprise.ps1'))) { $null=$info.ArgumentList.Add($argument) }
+          $process=[Diagnostics.Process]::Start($info)
+          $process.WaitForExit()
+          "INSTALL_EXIT=$($process.ExitCode)"
+          "SELECTED_IP=$($ip.IPAddress)"
+          '=== TASK ==='
+          Get-ScheduledTask -TaskName OperisEnterpriseServer -ErrorAction SilentlyContinue | Format-List *
+          Get-ScheduledTaskInfo -TaskName OperisEnterpriseServer -ErrorAction SilentlyContinue | Format-List *
+          '=== SERVER LOG ==='
+          Get-Content (Join-Path $root 'Logs\Server.log') -ErrorAction SilentlyContinue
+          '=== INSTALL LOG TAIL ==='
+          Get-Content (Join-Path $root 'Logs\Install.log') -Tail 80 -ErrorAction SilentlyContinue
+          '=== ENV KEYS ==='
+          $envFile=Join-Path $root 'server\.env'
+          if (Test-Path $envFile) {
+            Get-Content $envFile | Where-Object { $_ -match '^(DATABASE_URL|PORT|BIND_HOST|NODE_ENV|PUBLIC_URL|CLIENT_ORIGIN)=' } | ForEach-Object {
+              if ($_ -match '^DATABASE_URL=') { 'DATABASE_URL=SET' } else { $_ }
+            }
+          } else { 'ENV_FILE_MISSING' }
+          '=== NODE PATH ==='
+          Get-Content (Join-Path $root 'node-path.txt') -ErrorAction SilentlyContinue
+          '=== SERVER FILE ==='
+          Test-Path (Join-Path $root 'server\dist\index.js')
+          '=== LISTENER ==='
+          Get-NetTCPConnection -LocalPort 3001 -ErrorAction SilentlyContinue | Format-List *
+          '=== NODE PROCESSES ==='
+          Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue | Select-Object ProcessId,CommandLine | Format-List
+          '=== POSTGRES LISTENER ==='
+          Get-NetTCPConnection -LocalPort 5432 -State Listen -ErrorAction SilentlyContinue | Format-List *
+          '=== HEALTH LOOPBACK ==='
+          try { Invoke-RestMethod 'http://127.0.0.1:3001/api/health' -TimeoutSec 3 | ConvertTo-Json -Depth 6 } catch { $_.Exception.ToString() }
+          '=== HEALTH SELECTED IP ==='
+          try { Invoke-RestMethod "http://$($ip.IPAddress):3001/api/health" -TimeoutSec 3 | ConvertTo-Json -Depth 6 } catch { $_.Exception.ToString() }
+          if ($process.ExitCode -eq 0) { throw 'Debug run unexpectedly passed; expected reproduction.' }
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: runtime-debug-clean
+          path: C:\ProgramData\Operis\Logs
+          if-no-files-found: warn
