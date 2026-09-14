@@ -14,12 +14,71 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  setup-contract:
-    name: Setup EXE release contract
+  release-finalization:
+    name: Build and verify OPERIS_Setup_v6.3.63.exe
     runs-on: windows-2022
-    timeout-minutes: 10
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v6
-      - name: Prove setup packaging contract
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24.21.0"
+
+      - name: Verify setup release contract
         shell: pwsh
         run: .\tests\windows\setup-exe-contract.ps1
+
+      - name: Production dependency security audit
+        shell: pwsh
+        run: |
+          npm audit --omit=dev --audit-level=high
+          Push-Location server
+          try { npm audit --omit=dev --audit-level=high }
+          finally { Pop-Location }
+
+      - name: Install Inno Setup compiler when missing
+        shell: pwsh
+        run: |
+          $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+          }
+          if (-not (Test-Path $iscc)) { throw 'ISCC.exe bulunamadı.' }
+
+      - name: Build real Windows setup EXE
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path .\dist\installer -Force | Out-Null
+          & 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' .\installer\OPERIS.iss
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup compile failed: exit=$LASTEXITCODE" }
+          $exe = '.\dist\installer\OPERIS_Setup_v6.3.63.exe'
+          if (-not (Test-Path $exe)) { throw 'OPERIS_Setup_v6.3.63.exe üretilmedi.' }
+          if ((Get-Item $exe).Length -lt 1MB) { throw 'Setup EXE beklenmedik derecede küçük.' }
+
+      - name: Run real EXE lifecycle and DB survival validation
+        shell: pwsh
+        run: |
+          .\tests\windows\setup-exe-lifecycle.ps1 `
+            -SetupExe (Resolve-Path .\dist\installer\OPERIS_Setup_v6.3.63.exe).Path `
+            -EvidencePath (Join-Path $env:RUNNER_TEMP 'operis-setup-exe-lifecycle.json')
+
+      - name: Create SHA256 manifest
+        shell: pwsh
+        run: |
+          $exe = Resolve-Path .\dist\installer\OPERIS_Setup_v6.3.63.exe
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  OPERIS_Setup_v6.3.63.exe" | Set-Content .\dist\installer\OPERIS_Setup_v6.3.63.exe.sha256 -Encoding ASCII
+          Get-Content .\dist\installer\OPERIS_Setup_v6.3.63.exe.sha256
+
+      - name: Upload release candidate evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: operis-setup-v6.3.63-${{ github.sha }}
+          path: |
+            dist/installer/OPERIS_Setup_v6.3.63.exe
+            dist/installer/OPERIS_Setup_v6.3.63.exe.sha256
+            ${{ runner.temp }}/operis-setup-exe-lifecycle.json
+          if-no-files-found: warn
+          retention-days: 30
