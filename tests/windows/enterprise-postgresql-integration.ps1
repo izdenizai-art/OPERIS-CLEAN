@@ -34,7 +34,7 @@ if ($Scenario -eq 'legacy') {
     Remove-Item Env:DATABASE_URL
 }
 function Invoke-TestInstall {
-    $process=Start-Process powershell.exe -ArgumentList "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$source\windows\install-enterprise.ps1`"" -NoNewWindow -Wait -PassThru
+    $process=Start-Process powershell.exe -ArgumentList "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$source\windows\install-enterprise.ps1`"" -Environment @{ PSModulePath=$null } -NoNewWindow -Wait -PassThru
     if ($process.ExitCode -ne 0) { throw "Main enterprise installer failed, exit=$($process.ExitCode)." }
 }
 Invoke-TestInstall
