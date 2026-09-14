@@ -1,0 +1,25 @@
+name: OPERIS Release Finalization
+
+on:
+  push:
+    branches:
+      - postgresql-candidate-validation
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: operis-release-finalization-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  setup-contract:
+    name: Setup EXE release contract
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Prove setup packaging contract
+        shell: pwsh
+        run: .\tests\windows\setup-exe-contract.ps1
