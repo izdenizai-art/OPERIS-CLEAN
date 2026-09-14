@@ -14,6 +14,8 @@
   },
   "dependencies": {
     "@prisma/client": "^6.7.0",
+    "adm-zip": "^0.6.1",
+    "archiver": "^7.0.1",
     "bcryptjs": "^3.0.2",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
@@ -21,30 +23,28 @@
     "express": "^5.1.0",
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
-    "zod": "^3.24.4",
-    "nodemailer": "^6.10.1",
-    "archiver": "^7.0.1",
-    "multer": "^1.4.5-lts.1",
-    "adm-zip": "^0.6.0",
-    "qrcode": "^1.5.4",
     "mssql": "^11.0.1",
+    "multer": "^1.4.5-lts.1",
     "net-snmp": "^3.26.3",
-    "prisma": "^6.7.0"
+    "nodemailer": "10.0.9",
+    "prisma": "^6.7.0",
+    "qrcode": "^1.5.4",
+    "zod": "^3.24.4"
   },
   "devDependencies": {
+    "@types/adm-zip": "^0.5.7",
+    "@types/archiver": "^6.0.3",
     "@types/cookie-parser": "^1.4.8",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.1",
     "@types/jsonwebtoken": "^9.0.9",
-    "@types/node": "^22.15.3",
-    "tsx": "^4.19.4",
-    "typescript": "^5.8.3",
-    "@types/nodemailer": "^6.4.17",
-    "@types/archiver": "^6.0.3",
-    "@types/multer": "^1.4.12",
-    "@types/adm-zip": "^0.5.7",
-    "@types/qrcode": "^1.5.5",
     "@types/mssql": "^9.1.7",
-    "@types/net-snmp": "^3.23.0"
+    "@types/multer": "^1.4.12",
+    "@types/net-snmp": "^3.23.0",
+    "@types/node": "^22.15.3",
+    "@types/nodemailer": "^6.4.17",
+    "@types/qrcode": "^1.5.5",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
   }
 }

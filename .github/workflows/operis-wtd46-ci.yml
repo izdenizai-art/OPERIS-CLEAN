@@ -52,6 +52,8 @@ jobs:
         shell: pwsh
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
+          node tests/verify-pdf-export.cjs
+          node tests/verify-smtp-runtime.cjs
           node tests/verify-zip-restore-safety.cjs
           node tests/verify-helpdesk-structure.cjs
           node tests/verify-regression-baseline.cjs

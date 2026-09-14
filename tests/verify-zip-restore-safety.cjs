@@ -31,6 +31,25 @@ async function run() {
     assert.deepEqual(restored.getEntry('helpdesk-attachments/ek.txt').getData(), attachment);
   }
   console.log('ZIP_ARCHIVER_RESTORE_COMPATIBILITY_PASS');
+  // GHSA-vwc7-r8mq-g2x9: a destination symlink must never overwrite its target.
+  if (process.platform !== 'win32') {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const os = require('node:os');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'operis-zip-link-'));
+    try {
+      const destination = path.join(root, 'destination');
+      const outside = path.join(root, 'outside');
+      fs.mkdirSync(destination); fs.mkdirSync(outside);
+      fs.writeFileSync(path.join(outside, 'sentinel.txt'), 'preserved');
+      fs.symlinkSync(outside, path.join(destination, 'link'));
+      const zip = new AdmZip();
+      zip.addFile('link/sentinel.txt', Buffer.from('must not overwrite'));
+      try { zip.extractAllTo(destination, true); } catch (_) { /* Safe rejection is expected. */ }
+      assert.equal(fs.readFileSync(path.join(outside, 'sentinel.txt'), 'utf8'), 'preserved');
+      console.log('ZIP_DESTINATION_SYMLINK_SAFETY_PASS');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  }
 
   // Intercept large eager allocations so the old version can be tested without OOM.
   for (const method of [0, 8]) {
