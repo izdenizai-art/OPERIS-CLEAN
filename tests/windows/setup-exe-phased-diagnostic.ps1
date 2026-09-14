@@ -40,7 +40,7 @@ function Invoke-SetupExe {
     $p.Refresh()
     if ($p.ExitCode -ne 0) {
         Dump-Diagnostics
-        throw "Setup EXE failed in phase $Phase: exit=$($p.ExitCode)"
+        throw "Setup EXE failed in phase ${Phase}: exit=$($p.ExitCode)"
     }
     $childDeadline = (Get-Date).AddMinutes(3)
     do {
@@ -79,7 +79,7 @@ function Assert-Health {
         Start-Sleep -Seconds 2
     }
     Dump-Diagnostics
-    throw "Health failed in phase $Phase: $last"
+    throw "Health failed in phase ${Phase}: $last"
 }
 function Read-PgState {
     Add-Type -AssemblyName System.Security
