@@ -22,6 +22,8 @@ $assertions = [ordered]@{
     ServerTask = ($installerText -match '\$TaskName\s*=\s*"OperisEnterpriseServer"')
     BackupTask = ($installerText -match '\$BackupTaskName\s*=\s*"OperisEnterpriseDailyBackup"')
     Port = ($installerText -match '\$Port\s*=\s*3001')
+    ForeignPortRefusal = ((Get-Content $installer -Raw) -match 'TCP \$Port başka bir uygulama')
+    ExactNodeRuntime = ((Get-Content $installer -Raw) -match "nodeVersion -ne 'v24\.21\.0'")
     PostgreSQLIntegration = ((Get-Content $installer -Raw) -match '(?m)^    Initialize-OperisPostgresql\s*$')
     PrismaGenerate = ($installerText -match 'prisma:generate')
     PrismaPush = ($installerText -match 'prisma:push')

@@ -4,7 +4,10 @@ import { DatabaseSync } from 'node:sqlite';
 import { PrismaClient, Prisma } from '@prisma/client';
 
 const quote = name => `"${name.replaceAll('"', '""')}"`;
-const hashFile = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+const hashFile = file => new Promise((resolve, reject) => {
+  const hash = crypto.createHash('sha256');
+  fs.createReadStream(file).on('error', reject).on('data', chunk => hash.update(chunk)).on('end', () => resolve(hash.digest('hex')));
+});
 const canonical = value => value && typeof value === 'object' && !Array.isArray(value)
   ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])]))
   : Array.isArray(value) ? value.map(canonical) : value;
@@ -48,7 +51,7 @@ async function main() {
       target.pathname.slice(1) !== process.env.OPERIS_EXPECTED_TARGET_DATABASE) throw new Error('Target identity mismatch');
   const output = process.env.OPERIS_MIGRATION_EVIDENCE;
   if (!output) throw new Error('Migration evidence path required');
-  const beforeHash = hashFile(file);
+  const beforeHash = await hashFile(file);
   const sqlite = new DatabaseSync(file, { readOnly: true });
   const pg = new PrismaClient();
   try {
@@ -96,7 +99,7 @@ async function main() {
         if (digest(canonicalRows) !== digest(canonicalTarget)) throw new Error('Full row verification failed');
         evidence.push({ table, rows: sourceRows.length, fullRowSha256: digest(canonicalRows) });
       }
-      if (hashFile(file) !== beforeHash) throw new Error('Source changed during migration');
+      if (await hashFile(file) !== beforeHash) throw new Error('Source changed during migration');
     }, { timeout: 600000, maxWait: 30000, isolationLevel: 'Serializable' });
     fs.writeFileSync(output, JSON.stringify({ sourceSha256: beforeHash, tables: evidence, verification: 'FULL_ROWS_AND_PRIMARY_KEYS', result: 'PASS' }, null, 2));
     console.log('WINDOWS_SQLITE_POSTGRESQL_FULL_ROW_MIGRATION_PASS');

@@ -422,7 +422,15 @@ function Stop-OperisRuntime {
     }
     Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | ForEach-Object {
         if ($_.OwningProcess -and $_.OwningProcess -ne $PID) {
-            Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue
+            $process = Get-CimInstance Win32_Process -Filter "ProcessId=$($_.OwningProcess)" -ErrorAction SilentlyContinue
+            $commandLine = [string]$process.CommandLine
+            $legacyRoot = Join-Path $env:ProgramData 'YaklasanIsler'
+            $owned = $process -and (
+                $commandLine.IndexOf($InstallRoot,[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+                $commandLine.IndexOf($legacyRoot,[StringComparison]::OrdinalIgnoreCase) -ge 0
+            )
+            if (-not $owned) { throw "TCP $Port başka bir uygulama tarafından kullanılıyor; süreç durdurulmadı." }
+            Stop-Process -Id $_.OwningProcess -Force -ErrorAction Stop
         }
     }
 }

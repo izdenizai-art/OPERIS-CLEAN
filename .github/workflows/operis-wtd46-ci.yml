@@ -46,7 +46,9 @@ jobs:
 
       - name: Verify actual Windows firewall command and repeated rule application
         shell: pwsh
-        run: node tests/windows/firewall-runtime.cjs
+        run: |
+          node tests/windows/firewall-runtime.cjs
+          ./tests/windows/installer-runtime-ownership.ps1
 
       - name: Structural regression and current PostgreSQL contracts
         shell: pwsh

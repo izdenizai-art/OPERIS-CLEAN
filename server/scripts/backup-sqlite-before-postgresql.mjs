@@ -32,7 +32,10 @@ const backupDb = path.join(outputRoot, `yaklasan-isler-${stamp}.db`);
 const manifestPath = `${backupDb}.manifest.json`;
 
 const quoteSql = value => `'${String(value).replaceAll("'", "''")}'`;
-const sha256 = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+const sha256 = file => new Promise((resolve, reject) => {
+  const hash = crypto.createHash('sha256');
+  fs.createReadStream(file).on('error', reject).on('data', chunk => hash.update(chunk)).on('end', () => resolve(hash.digest('hex')));
+});
 
 const db = new DatabaseSync(sourceDb, { readOnly: true });
 try {
@@ -77,8 +80,8 @@ try {
     createdAt: new Date().toISOString(),
     sourceDb,
     backupDb,
-    sha256: sha256(backupDb),
-    sourceSha256: sha256(sourceDb),
+    sha256: await sha256(backupDb),
+    sourceSha256: await sha256(sourceDb),
     tableCounts: counts,
     integrityCheck: 'ok',
     note: 'PostgreSQL geçişinden önce transaction-consistent SQLite VACUUM INTO yedeği.',

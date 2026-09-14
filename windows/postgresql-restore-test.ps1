@@ -76,6 +76,8 @@ try {
       --port=$($connection.Port) `
       --username=$($connection.User) `
       --dbname=$TestDatabaseName `
+      --single-transaction `
+      --exit-on-error `
       --no-owner `
       --no-privileges `
       $BackupFile
