@@ -1,0 +1,86 @@
+name: OPERIS Full Finalization Dispatcher
+
+on:
+  push:
+    branches:
+      - full-finalization-dispatch
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  dispatch-staging-gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TARGET_REF: postgresql-candidate-validation
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Dispatch staging SQLite to PostgreSQL rehearsal
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh workflow run operis-staging-sqlite-postgresql-rehearsal.yml \
+            --ref "$TARGET_REF" \
+            -f confirmation=I_CONFIRM_STAGING_COPY_ONLY
+
+      - name: Dispatch 100-user NORMAL
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh workflow run operis-load-test.yml \
+            --ref "$TARGET_REF" \
+            -f branch_code=100 \
+            -f mode=normal \
+            -f confirm_mixed_writes=false \
+            -f require_unique_users=true \
+            -f helpdesk_scope=mine \
+            -f environment_confirmation=I_CONFIRM_NON_PRODUCTION
+
+      - name: Dispatch 100-user HELPDESK
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh workflow run operis-load-test.yml \
+            --ref "$TARGET_REF" \
+            -f branch_code=100 \
+            -f mode=helpdesk \
+            -f confirm_mixed_writes=false \
+            -f require_unique_users=true \
+            -f helpdesk_scope=mine \
+            -f environment_confirmation=I_CONFIRM_NON_PRODUCTION
+
+      - name: Dispatch 100-user MIXED
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh workflow run operis-load-test.yml \
+            --ref "$TARGET_REF" \
+            -f branch_code=100 \
+            -f mode=mixed \
+            -f confirm_mixed_writes=true \
+            -f require_unique_users=true \
+            -f helpdesk_scope=mine \
+            -f environment_confirmation=I_CONFIRM_NON_PRODUCTION
+
+      - name: Dispatch AD/DC SMTP Graph MSSQL SNMP integration smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh workflow run operis-integration-smoke.yml \
+            --ref "$TARGET_REF" \
+            -f confirmation=I_CONFIRM_NON_PRODUCTION \
+            -f test_domain=true \
+            -f test_smtp=true \
+            -f test_graph=true \
+            -f test_mssql=true \
+            -f test_snmp=true
+
+      - name: Show dispatched workflow runs
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh run list --branch "$TARGET_REF" --event workflow_dispatch --limit 20
