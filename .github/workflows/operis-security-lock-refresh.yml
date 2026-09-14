@@ -1,0 +1,42 @@
+name: OPERIS Security Lock Refresh
+
+on:
+  push:
+    branches:
+      - postgresql-candidate-validation
+
+permissions:
+  contents: read
+
+jobs:
+  refresh-server-lock:
+    if: contains(github.event.head_commit.message, '[security-lock-refresh]')
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24.21.0"
+      - name: Regenerate server lock with approved override
+        shell: pwsh
+        run: |
+          Push-Location server
+          try {
+            npm install --package-lock-only --ignore-scripts
+            if ($LASTEXITCODE -ne 0) { throw "npm lock refresh failed: exit=$LASTEXITCODE" }
+            npm ci --ignore-scripts
+            if ($LASTEXITCODE -ne 0) { throw "npm ci failed: exit=$LASTEXITCODE" }
+            npm audit --omit=dev --audit-level=high
+            if ($LASTEXITCODE -ne 0) { throw "npm audit failed: exit=$LASTEXITCODE" }
+            npm run build
+            if ($LASTEXITCODE -ne 0) { throw "server build failed: exit=$LASTEXITCODE" }
+          }
+          finally { Pop-Location }
+      - name: Upload regenerated lock
+        uses: actions/upload-artifact@v7
+        with:
+          name: server-package-lock-${{ github.sha }}
+          path: server/package-lock.json
+          if-no-files-found: error
+          retention-days: 7
