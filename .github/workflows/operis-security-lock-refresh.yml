@@ -6,7 +6,7 @@ on:
       - postgresql-candidate-validation
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   refresh-server-lock:
@@ -15,10 +15,12 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v6
         with:
           node-version: "24.21.0"
-      - name: Regenerate server lock with approved override
+      - name: Regenerate and verify secure server lock
         shell: pwsh
         run: |
           Push-Location server
@@ -35,10 +37,15 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "server build failed: exit=$LASTEXITCODE" }
           }
           finally { Pop-Location }
-      - name: Upload regenerated lock
-        uses: actions/upload-artifact@v7
-        with:
-          name: server-package-lock-${{ github.sha }}
-          path: server/package-lock.json
-          if-no-files-found: error
-          retention-days: 7
+      - name: Commit verified lock and remove one-time workflow
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add server/package-lock.json
+          git rm .github/workflows/operis-security-lock-refresh.yml
+          if (-not (git status --porcelain)) { throw 'Expected lock/workflow changes were not produced.' }
+          git commit -m "Lock secure server dependency graph [lock-finalized]"
+          if ($LASTEXITCODE -ne 0) { throw "git commit failed: exit=$LASTEXITCODE" }
+          git push origin HEAD:postgresql-candidate-validation
+          if ($LASTEXITCODE -ne 0) { throw "git push failed: exit=$LASTEXITCODE" }
