@@ -112,7 +112,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Isolated backup restore test failed.' }
     $result.backupRestore = 'PASS'
 
-    Invoke-AppSql 'INSERT INTO "SystemMigration" ("key","appliedAt","note") VALUES (''setup-exe-db-survival'', CURRENT_TIMESTAMP, ''exe lifecycle'') ON CONFLICT ("key") DO UPDATE SET "note"=EXCLUDED."note";' | Out-Null
+    Invoke-AppSql 'INSERT INTO "SystemMigration" ("key","appliedAt","note") VALUES (''setup-exe-db-survival'', CURRENT_TIMESTAMP, ''exe lifecycle'') ON CONFLICT ("key") DO UPDATE SET "note"=EXCLUDED."note";'.Replace('\"','"') | Out-Null
     $uninstaller = Join-Path $SetupRoot 'unins000.exe'
     if (-not (Test-Path $uninstaller)) { throw 'Inno uninstaller missing.' }
     $u = Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
@@ -120,20 +120,20 @@ try {
     if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) { throw 'Runtime task survived uninstall.' }
     if (-not (Test-Path $PgRoot)) { throw 'Managed PostgreSQL root was deleted by uninstall.' }
     if ((Get-FileHash (Join-Path $PgRoot 'credentials.dpapi') -Algorithm SHA256).Hash -ne $credentialHash) { throw 'PostgreSQL credentials changed during uninstall.' }
-    if ((Invoke-AppSql 'SELECT count(*) FROM "SystemMigration" WHERE "key"=''setup-exe-db-survival'';') -ne '1') { throw 'Database sentinel did not survive uninstall.' }
+    if ((Invoke-AppSql 'SELECT count(*) FROM "SystemMigration" WHERE "key"=''setup-exe-db-survival'';'.Replace('\"','"')) -ne '1') { throw 'Database sentinel did not survive uninstall.' }
     $result.uninstall = 'PASS'
     $result.dbSurvival = 'PASS'
 
     Invoke-SetupExe
     Assert-Health | Out-Null
-    if ((Invoke-AppSql 'SELECT count(*) FROM "SystemMigration" WHERE "key"=''setup-exe-db-survival'';') -ne '1') { throw 'Database sentinel did not survive reinstall after uninstall.' }
+    if ((Invoke-AppSql 'SELECT count(*) FROM "SystemMigration" WHERE "key"=''setup-exe-db-survival'';'.Replace('\"','"')) -ne '1') { throw 'Database sentinel did not survive reinstall after uninstall.' }
 }
 finally {
     $result | ConvertTo-Json -Depth 5 | Set-Content $EvidencePath -Encoding UTF8
     Get-Content $EvidencePath
 }
 
-if ($result.cleanInstall -ne 'PASS' -or $result.reinstall -ne 'PASS' -or $result.repair -ne 'PASS' -or $result.startupTask -ne 'PASS' -or $result.uninstall -ne 'PASS' -or $result.dbSurvival -ne 'PASS' -or $result.backupRestore -ne 'PASS') {
+if ($result.cleanInstall -ne 'PASS' -or $result.reinstall -ne 'PASS' -or $result.upgradePath -notlike 'PASS*' -or $result.repair -ne 'PASS' -or $result.startupTask -ne 'PASS' -or $result.uninstall -ne 'PASS' -or $result.dbSurvival -ne 'PASS' -or $result.backupRestore -ne 'PASS') {
     throw 'Setup EXE lifecycle gate failed.'
 }
 Write-Output 'OPERIS_SETUP_EXE_LIFECYCLE_PASS'

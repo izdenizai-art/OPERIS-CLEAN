@@ -27,6 +27,8 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "npm lock refresh failed: exit=$LASTEXITCODE" }
             npm ci --ignore-scripts
             if ($LASTEXITCODE -ne 0) { throw "npm ci failed: exit=$LASTEXITCODE" }
+            npx prisma generate
+            if ($LASTEXITCODE -ne 0) { throw "prisma generate failed: exit=$LASTEXITCODE" }
             npm audit --omit=dev --audit-level=high
             if ($LASTEXITCODE -ne 0) { throw "npm audit failed: exit=$LASTEXITCODE" }
             npm run build
