@@ -51,8 +51,8 @@ function Invoke-AppSql([string]$Sql) {
     } finally { $env:PGPASSWORD = $old }
 }
 
-$sentinelInsertSql = 'INSERT INTO "SystemMigration" ("key","appliedAt","note") VALUES (''setup-exe-db-survival'', CURRENT_TIMESTAMP, ''exe lifecycle'') ON CONFLICT ("key") DO UPDATE SET "note"=EXCLUDED."note";'
-$sentinelSelectSql = 'SELECT count(*) FROM "SystemMigration" WHERE "key"=''setup-exe-db-survival'';'
+$sentinelInsertSql = ('INSERT INTO {q}SystemMigration{q} ({q}key{q},{q}appliedAt{q},{q}note{q}) VALUES (''setup-exe-db-survival'', CURRENT_TIMESTAMP, ''exe lifecycle'') ON CONFLICT ({q}key{q}) DO UPDATE SET {q}note{q}=EXCLUDED.{q}note{q};').Replace('{q}', [string][char]34)
+$sentinelSelectSql = ('SELECT count(*) FROM {q}SystemMigration{q} WHERE {q}key{q}=''setup-exe-db-survival'';').Replace('{q}', [string][char]34)
 
 $result = [ordered]@{
     sourceSha = $env:GITHUB_SHA
