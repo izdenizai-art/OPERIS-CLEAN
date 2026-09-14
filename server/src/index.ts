@@ -217,7 +217,7 @@ async function syncRemoteAccessFirewall(mode: RemoteAccessMode) {
 
   await new Promise<void>((resolve, reject) => {
     execFile('powershell.exe', ['-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-Command', script],
-      { windowsHide: true, timeout: 15000, encoding: 'utf8' }, (error, _stdout, stderr) => {
+      { windowsHide: true, timeout: 90000, encoding: 'utf8' }, (error, _stdout, stderr) => {
         if (error) { reject(new Error(String(stderr || error.message || 'Windows Firewall güncellenemedi.').trim())); return; }
         resolve();
       });
