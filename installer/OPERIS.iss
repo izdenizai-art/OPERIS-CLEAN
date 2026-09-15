@@ -36,6 +36,7 @@ var
   MaintenancePage: TInputOptionWizardPage;
   InstalledVersion: String;
   MaintenanceAction: String;
+  InstallerExitCode: Integer;
 
 procedure ExitProcess(uExitCode: Cardinal);
   external 'ExitProcess@kernel32.dll stdcall';
@@ -46,8 +47,14 @@ begin
     'DisplayVersion', Version);
 end;
 
+function GetCustomSetupExitCode: Integer;
+begin
+  Result := InstallerExitCode;
+end;
+
 procedure InitializeWizard;
 begin
+  InstallerExitCode := 0;
   MaintenanceAction := '';
   InstalledVersion := '';
   if ReadInstalledVersion(InstalledVersion) and
@@ -110,6 +117,7 @@ var
   ResultCode: Integer;
   PowerShell: String;
   Params: String;
+  ExecOk: Boolean;
 begin
   if CurStep = ssPostInstall then
   begin
@@ -119,9 +127,20 @@ begin
       ExpandConstant('{tmp}\OPERISPayload') + '"';
     if MaintenanceAction <> '' then
       Params := Params + ' -MaintenanceAction "' + MaintenanceAction + '"';
-    if (not Exec(PowerShell, Params, ExpandConstant('{tmp}\OPERISPayload'), SW_HIDE,
-      ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0) then
+
+    ResultCode := 0;
+    ExecOk := Exec(PowerShell, Params, ExpandConstant('{tmp}\OPERISPayload'), SW_HIDE,
+      ewWaitUntilTerminated, ResultCode);
+
+    if not ExecOk then
     begin
+      InstallerExitCode := 4;
+      RaiseException('OPERIS ana installer başlatılamadı.');
+    end;
+
+    if ResultCode <> 0 then
+    begin
+      InstallerExitCode := ResultCode;
       RaiseException(Format('OPERIS ana installer başarısız oldu. ExitCode=%d', [ResultCode]));
     end;
   end;
