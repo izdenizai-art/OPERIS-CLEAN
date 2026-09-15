@@ -1,0 +1,61 @@
+name: Production Update Hardening Runtime
+
+on:
+  push:
+    branches: [ production-update-hardening-eee04356 ]
+    paths: [ '.github/workflows/production-update-runtime.yml' ]
+
+permissions:
+  contents: read
+
+jobs:
+  runtime:
+    runs-on: windows-2022
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24.21.0'
+      - name: Parse lifecycle and installer PowerShell with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $files = @(
+            '.\tests\windows\setup-exe-lifecycle.ps1',
+            '.\windows\install-enterprise.ps1',
+            '.\windows\setup-launch.ps1',
+            '.\windows\postgresql-provision.ps1'
+          )
+          foreach ($file in $files) {
+            $tokens = $null; $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file), [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count) { $errors | ForEach-Object { Write-Error $_.Message }; exit 1 }
+          }
+      - name: Install Inno Setup compiler when missing
+        shell: pwsh
+        run: |
+          $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          if (-not (Test-Path $iscc)) { throw 'ISCC.exe missing.' }
+      - name: Build hardened real setup EXE
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path .\dist\installer -Force | Out-Null
+          & 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' .\installer\OPERIS.iss
+          if ($LASTEXITCODE -ne 0) { throw "Inno compile failed: $LASTEXITCODE" }
+      - name: Run hardened real EXE lifecycle
+        shell: pwsh
+        run: |
+          .\tests\windows\setup-exe-lifecycle.ps1 `
+            -SetupExe (Resolve-Path .\dist\installer\OPERIS_Setup_v6.3.63.exe).Path `
+            -EvidencePath (Join-Path $env:RUNNER_TEMP 'operis-production-hardening-lifecycle.json')
+      - name: Upload diagnostic lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: operis-production-update-hardening-runtime-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/operis-production-hardening-lifecycle.json
+            C:/ProgramData/Operis/Logs/*.log
+          if-no-files-found: warn
+          retention-days: 14
