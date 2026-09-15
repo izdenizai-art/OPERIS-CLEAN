@@ -1,5 +1,6 @@
 name: Production Update Hardening Runtime
 
+# Trigger real EXE runtime on the current hardening source head.
 on:
   push:
     branches: [ production-update-hardening-eee04356 ]
