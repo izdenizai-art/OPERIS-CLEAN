@@ -1,11 +1,23 @@
 param(
     [Parameter(Mandatory = $true)][string]$SetupExe,
-    [Parameter(Mandatory = $true)][string]$EvidencePath
+    [Parameter(Mandatory = $true)][string]$EvidencePath,
+    [switch]$BootstrapIfMissing
 )
 $ErrorActionPreference = 'Stop'
 $InstallRoot = Join-Path $env:ProgramData 'Operis'
 $PgRoot = Join-Path $env:ProgramData 'OperisPostgreSQL'
+$SetupRoot = Join-Path $env:ProgramData 'Operis-Setup'
 
+function Invoke-SetupExe {
+    $setupLog = Join-Path $env:RUNNER_TEMP 'operis-forced-rollback-bootstrap.log'
+    $p = Start-Process -FilePath $SetupExe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',("/LOG=$setupLog") -PassThru
+    if (-not $p.WaitForExit(30 * 60 * 1000)) {
+        try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch {}
+        throw 'Bootstrap setup timed out.'
+    }
+    $p.Refresh()
+    if ($p.ExitCode -ne 0) { throw "Bootstrap setup failed: exit=$($p.ExitCode)" }
+}
 function Get-Binding {
     $path = Join-Path $InstallRoot 'Data\NetworkBinding.json'
     if (-not (Test-Path $path)) { throw 'NetworkBinding.json missing before forced rollback test.' }
@@ -48,13 +60,32 @@ function Invoke-AppSql([string]$Sql) {
     } finally { $env:PGPASSWORD = $old }
 }
 
-if (-not (Test-Path $EvidencePath)) { throw "Lifecycle evidence missing: $EvidencePath" }
 if (-not (Test-Path $SetupExe)) { throw "Setup EXE missing: $SetupExe" }
+$sentinelInsertSql = ('INSERT INTO {q}SystemMigration{q} ({q}key{q},{q}appliedAt{q},{q}note{q}) VALUES (''setup-exe-db-survival'', CURRENT_TIMESTAMP, ''forced rollback bootstrap'') ON CONFLICT ({q}key{q}) DO UPDATE SET {q}note{q}=EXCLUDED.{q}note{q};').Replace('{q}', [string][char]34)
+$sentinelSelectSql = ('SELECT count(*) FROM {q}SystemMigration{q} WHERE {q}key{q}=''setup-exe-db-survival'';').Replace('{q}', [string][char]34)
 
+if ($BootstrapIfMissing -and (-not (Test-Path (Join-Path $InstallRoot 'Data\NetworkBinding.json')))) {
+    if (Test-Path $InstallRoot) { Remove-Item $InstallRoot -Recurse -Force }
+    if (Test-Path $SetupRoot) { Remove-Item $SetupRoot -Recurse -Force }
+    if (Test-Path $PgRoot) { throw 'Fresh hosted runner expected for rollback bootstrap.' }
+    Invoke-SetupExe
+    Assert-Health | Out-Null
+    Invoke-AppSql $sentinelInsertSql | Out-Null
+    [ordered]@{
+        sourceSha = $env:GITHUB_SHA
+        phase = 'ForcedRollback'
+        cleanInstall = 'PASS'
+        updateRollback = 'NOT_RUN'
+        rollbackHealth = 'NOT_RUN'
+        reboot = 'NOT_TESTED_HOSTED_RUNNER'
+        realPreviousExeUpgrade = 'NOT_RUN_NO_REAL_PREVIOUS_EXE_ARTIFACT'
+    } | ConvertTo-Json -Depth 5 | Set-Content $EvidencePath -Encoding UTF8
+}
+
+if (-not (Test-Path $EvidencePath)) { throw "Lifecycle evidence missing: $EvidencePath" }
 $credentialPath = Join-Path $PgRoot 'credentials.dpapi'
 $credentialHash = (Get-FileHash $credentialPath -Algorithm SHA256).Hash
 $bindingSignature = Get-BindingSignature
-$sentinelSelectSql = ('SELECT count(*) FROM {q}SystemMigration{q} WHERE {q}key{q}=''setup-exe-db-survival'';').Replace('{q}', [string][char]34)
 if ((Invoke-AppSql $sentinelSelectSql) -ne '1') { throw 'Database sentinel missing before forced rollback test.' }
 
 $oldMaintenance = $env:OPERIS_MAINTENANCE_ACTION
