@@ -8,6 +8,7 @@ on:
     paths:
       - "tests/windows/**"
       - ".github/workflows/operis-wtd46-ci.yml"
+      - ".github/workflows/operis-postgresql-backup-restore.yml"
       - "server/package.json"
       - "server/package-lock.json"
       - "windows/**"
