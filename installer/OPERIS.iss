@@ -28,6 +28,83 @@ Source: "..\*"; DestDir: "{tmp}\OPERISPayload"; Flags: ignoreversion recursesubd
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{commonappdata}\Operis\windows\uninstall-enterprise.ps1"""; Flags: runhidden waituntilterminated; RunOnceId: "OPERISPreserveDatabase"
 
 [Code]
+const
+  OperisUninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{8A91CCDF-5230-4A91-A6AD-C3D9656F6363}_is1';
+  TargetVersion = '6.3.63';
+
+var
+  MaintenancePage: TInputOptionWizardPage;
+  InstalledVersion: String;
+  MaintenanceAction: String;
+
+procedure ExitProcess(uExitCode: Cardinal);
+  external 'ExitProcess@kernel32.dll stdcall';
+
+function ReadInstalledVersion(var Version: String): Boolean;
+begin
+  Result := RegQueryStringValue(HKEY_LOCAL_MACHINE, OperisUninstallKey,
+    'DisplayVersion', Version);
+end;
+
+procedure InitializeWizard;
+begin
+  MaintenanceAction := '';
+  InstalledVersion := '';
+  if ReadInstalledVersion(InstalledVersion) and
+     (InstalledVersion = TargetVersion) and (not WizardSilent) then
+  begin
+    MaintenancePage := CreateInputOptionPage(wpWelcome,
+      'OPERIS Bakım Modu',
+      'Mevcut OPERIS Enterprise ' + InstalledVersion + ' kurulumu bulundu.',
+      'Yapılacak işlemi seçin. Veritabanı ve mevcut yapılandırma korunacaktır.',
+      True, False);
+    MaintenancePage.Add('REPAIR - Uygulama dosyalarını ve runtime bileşenlerini onar');
+    MaintenancePage.Add('REFRESH / REINSTALL - Aynı sürüm uygulama katmanını yeniden kur');
+    MaintenancePage.Add('UNINSTALL - Uygulamayı kaldır, veritabanı ve yedekleri koru');
+    MaintenancePage.SelectedValueIndex := 0;
+  end;
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+var
+  ResultCode: Integer;
+  Uninstaller: String;
+begin
+  Result := True;
+  if Assigned(MaintenancePage) and (CurPageID = MaintenancePage.ID) then
+  begin
+    case MaintenancePage.SelectedValueIndex of
+      0: MaintenanceAction := 'REPAIR';
+      1: MaintenanceAction := 'REFRESH';
+      2:
+        begin
+          if MsgBox('OPERIS uygulaması kaldırılacak. PostgreSQL verisi, yedekler ve korunan yapılandırma silinmeyecektir. Devam edilsin mi?',
+            mbConfirmation, MB_YESNO) <> IDYES then
+          begin
+            Result := False;
+            Exit;
+          end;
+          Uninstaller := ExpandConstant('{app}\unins000.exe');
+          if not FileExists(Uninstaller) then
+          begin
+            MsgBox('Mevcut OPERIS uninstaller bulunamadı: ' + Uninstaller, mbError, MB_OK);
+            Result := False;
+            Exit;
+          end;
+          if (not Exec(Uninstaller, '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART',
+            ExpandConstant('{app}'), SW_SHOWNORMAL, ewWaitUntilTerminated, ResultCode)) or
+            (ResultCode <> 0) then
+          begin
+            MsgBox(Format('OPERIS uninstall başarısız oldu. ExitCode=%d', [ResultCode]), mbError, MB_OK);
+            Result := False;
+            Exit;
+          end;
+          ExitProcess(0);
+        end;
+    end;
+  end;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   ResultCode: Integer;
@@ -40,6 +117,8 @@ begin
     Params := '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' +
       ExpandConstant('{tmp}\OPERISPayload\windows\setup-launch.ps1') + '" -PayloadRoot "' +
       ExpandConstant('{tmp}\OPERISPayload') + '"';
+    if MaintenanceAction <> '' then
+      Params := Params + ' -MaintenanceAction "' + MaintenanceAction + '"';
     if (not Exec(PowerShell, Params, ExpandConstant('{tmp}\OPERISPayload'), SW_HIDE,
       ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0) then
     begin
