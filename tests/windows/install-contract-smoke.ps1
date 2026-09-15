@@ -41,6 +41,11 @@ $assertions = [ordered]@{
     PrismaPush = ($installerText -match 'prisma:push')
     Build = ($installerText -match '@\("run",\s*"build"\)')
     Health = ($installerText -match '/api/health')
+    RollbackHealthVerification = (
+        $installerSource -match 'function\s+Verify-RollbackHealth' -and
+        $installerSource -match 'Rollback health' -and
+        $installerSource -match 'database\.connected'
+    )
     DomainPrivateFirewall = ($installerText -match 'Operis Enterprise TCP \$Port - DomainPrivate')
     PublicSubnetFirewall = ($installerText -match 'Operis Enterprise TCP \$Port - PublicLocalSubnet')
     ForceCleanExplicit = ($configText -match '(?m)^FORCE_CLEAN_INSTALL=(YES|NO)\s*$')
