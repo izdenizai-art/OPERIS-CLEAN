@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - postgresql-candidate-validation
-      - lifecycle-speed-optimization
   workflow_dispatch:
 
 permissions:
