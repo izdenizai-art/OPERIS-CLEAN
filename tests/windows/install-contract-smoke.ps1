@@ -46,6 +46,11 @@ $assertions = [ordered]@{
         $installerSource -match 'Rollback health' -and
         $installerSource -match 'database\.connected'
     )
+    CIOnlyFailureInjection = (
+        $installerSource -match 'OPERIS_TEST_FORCE_UPDATE_FAILURE' -and
+        $installerSource -match '\$env:GITHUB_ACTIONS\s+-eq\s+''true''' -and
+        $installerSource -match 'OPERIS_TEST_FORCED_UPDATE_FAILURE'
+    )
     DomainPrivateFirewall = ($installerText -match 'Operis Enterprise TCP \$Port - DomainPrivate')
     PublicSubnetFirewall = ($installerText -match 'Operis Enterprise TCP \$Port - PublicLocalSubnet')
     ForceCleanExplicit = ($configText -match '(?m)^FORCE_CLEAN_INSTALL=(YES|NO)\s*$')
