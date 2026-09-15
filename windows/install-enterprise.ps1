@@ -17,6 +17,7 @@ $InstallLog = Join-Path $LogsRoot "Install.log"
 $TranscriptLog = Join-Path $LogsRoot "Install-Transcript.log"
 $script:RollbackRoot = $null
 $script:InstallMode = "NEW"
+$script:SameVersionMaintenance = $false
 $script:PreviousVersion = ""
 $script:UpgradeSucceeded = $false
 $script:SelectedIPv4 = $null
@@ -107,6 +108,24 @@ function Get-InstallMode {
 
     if (Test-Path $versionFile) {
         $script:PreviousVersion = (Get-Content $versionFile -Raw -ErrorAction SilentlyContinue).Trim()
+        try {
+            $installedVersion = [version]$script:PreviousVersion
+            $targetVersion = [version]$Version
+            if ($installedVersion -gt $targetVersion) { return "DOWNGRADE_BLOCKED" }
+            if ($installedVersion -eq $targetVersion) {
+                $script:SameVersionMaintenance = $true
+                $maintenanceAction = ([string]$env:OPERIS_MAINTENANCE_ACTION).Trim().ToUpperInvariant()
+                if ([string]::IsNullOrWhiteSpace($maintenanceAction)) { $maintenanceAction = "REPAIR" }
+                if ($maintenanceAction -notin @("REPAIR", "REFRESH")) {
+                    throw "SAME_VERSION maintenance action must be REPAIR or REFRESH."
+                }
+                return $maintenanceAction
+            }
+        } catch [System.Management.Automation.RuntimeException] {
+            throw
+        } catch {
+            Write-Log "Kurulu sürüm karşılaştırılamadı; güvenli UPDATE akışı kullanılacak: $script:PreviousVersion" "WARN"
+        }
         return "UPDATE"
     }
     if ((Test-Path $database) -or (Test-Path $legacyDatabase) -or (Test-Path $InstallRoot)) {
@@ -657,10 +676,47 @@ function Get-OperisIPv4Candidates {
     return $rows
 }
 
+function Get-ExistingOperisNetworkBinding {
+    $bindingFile = Join-Path $DataRoot "NetworkBinding.json"
+    if (-not (Test-Path $bindingFile)) { return $null }
+    try {
+        $binding = Get-Content $bindingFile -Raw | ConvertFrom-Json
+        if ([string]::IsNullOrWhiteSpace([string]$binding.ipAddress)) { return $null }
+        return $binding
+    } catch {
+        Write-Log "Mevcut NetworkBinding.json okunamadı; diğer güvenli seçim kaynaklarına geçiliyor." "WARN"
+        return $null
+    }
+}
+
 function Select-OperisServerIPv4 {
     $candidates = @(Get-OperisIPv4Candidates)
     if ($candidates.Count -eq 0) {
         throw "Sunucuda yayına uygun aktif IPv4 adresi bulunamadı. Ağ bağdaştırıcısı ve statik IP yapılandırmasını kontrol edin."
+    }
+
+    $explicitIp = ([string]$env:OPERIS_EXPLICIT_BIND_IP).Trim()
+    if (-not [string]::IsNullOrWhiteSpace($explicitIp)) {
+        $explicit = $candidates | Where-Object { $_.IPAddress -eq $explicitIp } | Select-Object -First 1
+        if (-not $explicit) { throw "Bu setup oturumunda seçilen IP aktif bir local IPv4 değil: $explicitIp" }
+        $script:SelectedIPv4 = $explicit.IPAddress
+        $script:SelectedInterfaceAlias = $explicit.InterfaceAlias
+        Write-Log "Yayın IP adresi bu setup oturumundaki açık kullanıcı seçimiyle değiştirildi: $($script:SelectedIPv4) [$($script:SelectedInterfaceAlias)]"
+        return
+    }
+
+    if ($script:InstallMode -ne "NEW") {
+        $existingBinding = Get-ExistingOperisNetworkBinding
+        if ($existingBinding) {
+            $existing = $candidates | Where-Object { $_.IPAddress -eq ([string]$existingBinding.ipAddress) } | Select-Object -First 1
+            if ($existing) {
+                $script:SelectedIPv4 = $existing.IPAddress
+                $script:SelectedInterfaceAlias = $existing.InterfaceAlias
+                Write-Log "Mevcut NetworkBinding.json korunuyor: $($script:SelectedIPv4) [$($script:SelectedInterfaceAlias)]"
+                return
+            }
+            Write-Log "Mevcut NetworkBinding IP artık aktif bir local NIC üzerinde değil: $($existingBinding.ipAddress)" "WARN"
+        }
     }
 
     $config = Read-OperisServerConfig
@@ -954,6 +1010,8 @@ try {
     Write-Step "Kurulum modu belirleniyor"
     Write-Log "Kurulum modu: $script:InstallMode | Önceki sürüm: $script:PreviousVersion | Hedef sürüm: $Version"
 
+    if ($script:InstallMode -eq "DOWNGRADE_BLOCKED") { throw "Kurulu OPERIS sürümü hedef sürümden daha yeni; downgrade varsayılan olarak engellendi." }
+
     if ($forceCleanInstall -and ((Find-OperisDatabaseState) -or (Test-Path (Join-Path $InstallRoot 'VERSION.txt')))) {
         throw "Mevcut kurulumda FORCE_CLEAN_INSTALL veri güvenliği için reddedildi; mevcut veriler korunuyor."
     }
@@ -1013,7 +1071,11 @@ try {
     Ensure-EnvironmentFile
 
     Write-Step "Veritabanı ve Prisma istemcisi hazırlanıyor"
-    Initialize-OperisPostgresql
+    if ($script:SameVersionMaintenance) {
+        Write-Log "Same-version $script:InstallMode: mevcut PostgreSQL şema/verisine db push uygulanmayacak; sağlıklı yönetilen PostgreSQL yeniden kullanılacak."
+    } else {
+        Initialize-OperisPostgresql
+    }
 
     Write-Step "Mevcut mail ve veritabanı bağlantıları aktarılıyor"
     Import-PreservedSettings
