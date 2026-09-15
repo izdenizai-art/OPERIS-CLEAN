@@ -169,6 +169,30 @@ function Create-RollbackSnapshot {
     } | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $script:RollbackRoot "rollback-manifest.json") -Encoding UTF8
 }
 
+function Verify-RollbackHealth {
+    $binding = Get-ExistingOperisNetworkBinding
+    if (-not $binding) { throw "Rollback health için NetworkBinding.json bulunamadı." }
+    $rollbackIp = [string]$binding.ipAddress
+    $rollbackPort = [int]$binding.port
+    if ([string]::IsNullOrWhiteSpace($rollbackIp) -or $rollbackPort -le 0) { throw "Rollback health binding geçersiz." }
+    $lastError = ""
+    for ($attempt = 1; $attempt -le 30; $attempt++) {
+        try {
+            $health = Invoke-RestMethod -Uri "http://${rollbackIp}:$rollbackPort/api/health" -TimeoutSec 5
+            $versionOk = [string]::IsNullOrWhiteSpace($script:PreviousVersion) -or ([string]$health.version -eq $script:PreviousVersion)
+            if ($health.ok -and $versionOk -and $health.database.provider -eq "postgresql" -and $health.database.connected) {
+                Write-Log "Rollback health doğrulaması başarılı. Sürüm: $($health.version)" "WARN"
+                return $true
+            }
+            $lastError = "Rollback health mismatch: ok=$($health.ok), version=$($health.version), provider=$($health.database.provider), connected=$($health.database.connected)"
+        } catch {
+            $lastError = $_.Exception.Message
+        }
+        Start-Sleep -Seconds 2
+    }
+    throw "Rollback health doğrulaması başarısız: $lastError"
+}
+
 function Restore-RollbackSnapshot {
     if (-not $script:RollbackRoot -or -not (Test-Path $script:RollbackRoot)) { return $false }
 
@@ -201,7 +225,8 @@ function Restore-RollbackSnapshot {
         }
         Install-Runner
         Start-ScheduledTask -TaskName $TaskName
-        Write-Log "Önceki sürüm geri yüklendi." "WARN"
+        if (-not (Verify-RollbackHealth)) { throw "Rollback health verification returned false." }
+        Write-Log "Önceki sürüm geri yüklendi ve health doğrulandı." "WARN"
         return $true
     }
     catch {
