@@ -94,3 +94,22 @@ jobs:
 
       - name: Help Desk beklenen guard ve yetkileri
         run: node tests/verify-helpdesk-structure.cjs
+
+  progress-ui:
+    name: Windows Progress UI Contract + Runtime
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - name: Repository checkout
+        uses: actions/checkout@v6
+
+      - name: Progress UI contract on Windows PowerShell 5.1
+        shell: powershell
+        run: .\tests\windows\progress-ui-contract.ps1
+
+      - name: Progress UI process runtime on Windows PowerShell 5.1 STA
+        shell: powershell
+        run: |
+          $evidence = Join-Path $env:RUNNER_TEMP 'progress-ui-evidence.json'
+          powershell.exe -STA -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\tests\windows\progress-ui-runtime.ps1 -EvidencePath $evidence
+          if ($LASTEXITCODE -ne 0) { throw "Progress UI runtime failed: exit=$LASTEXITCODE" }
