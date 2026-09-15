@@ -33,6 +33,6 @@ jobs:
             exit 1
           }
           Write-Output 'POWERSHELL_51_PARSE_PASS'
-      - name: Run production update installer contract
+      - name: Run production update installer contract including rollback health
         shell: powershell
         run: .\tests\windows\install-contract-smoke.ps1
