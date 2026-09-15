@@ -19,7 +19,8 @@ jobs:
           $files = @(
             '.\windows\install-enterprise.ps1',
             '.\windows\setup-launch.ps1',
-            '.\windows\postgresql-provision.ps1'
+            '.\windows\postgresql-provision.ps1',
+            '.\tests\windows\setup-exe-forced-rollback.ps1'
           )
           $allErrors = @()
           foreach ($file in $files) {
@@ -33,6 +34,9 @@ jobs:
             exit 1
           }
           Write-Output 'POWERSHELL_51_PARSE_PASS'
-      - name: Run production update installer contract including rollback health
+      - name: Run production update installer contract
         shell: powershell
         run: .\tests\windows\install-contract-smoke.ps1
+      - name: Run setup EXE maintenance UI/release contract
+        shell: powershell
+        run: .\tests\windows\setup-exe-contract.ps1
