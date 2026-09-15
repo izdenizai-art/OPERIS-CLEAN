@@ -1,0 +1,18 @@
+name: Production Update Hardening RED
+
+on:
+  push:
+    branches: [ production-update-hardening-eee04356 ]
+
+permissions:
+  contents: read
+
+jobs:
+  contract-red:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run production update installer contract
+        shell: powershell
+        run: .\tests\windows\install-contract-smoke.ps1
