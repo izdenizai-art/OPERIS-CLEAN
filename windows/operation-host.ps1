@@ -185,6 +185,10 @@ function Set-ProgressFromLine([string]$Line) {
     }
 }
 
+function Convert-ToPsSingleQuotedLiteral([string]$Value) {
+    return "'" + $Value.Replace("'", "''") + "'"
+}
+
 $script:DetectedCurrentVersion = ''
 $script:ResolvedOperationType = Resolve-DisplayOperation
 if ([string]::IsNullOrWhiteSpace($CurrentVersion)) {
@@ -239,13 +243,30 @@ $tempRoot = Join-Path $env:TEMP ("Operis-Operation-{0}" -f $SessionId)
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 $stdoutFile = Join-Path $tempRoot 'stdout.log'
 $stderrFile = Join-Path $tempRoot 'stderr.log'
+$exitCodeFile = Join-Path $tempRoot 'engine-exit-code.txt'
+$runnerScript = Join-Path $tempRoot 'engine-runner.ps1'
 $exitCode = 1
 
 try {
-    $argumentList = @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',('"{0}"' -f $engineScript))
-    foreach ($arg in $engineArgs) { $argumentList += ('"{0}"' -f ([string]$arg).Replace('"','\"')) }
+    $nativePowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $engineInvocation = '& ' + (Convert-ToPsSingleQuotedLiteral $nativePowerShell) +
+        ' -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' +
+        (Convert-ToPsSingleQuotedLiteral $engineScript)
+    foreach ($arg in $engineArgs) {
+        $engineInvocation += ' ' + (Convert-ToPsSingleQuotedLiteral ([string]$arg))
+    }
 
-    $process = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') `
+    $runnerContent = @(
+        '$ErrorActionPreference = ''Stop''',
+        $engineInvocation,
+        '$engineExit = $LASTEXITCODE',
+        ('[System.IO.File]::WriteAllText({0}, [string]$engineExit, (New-Object System.Text.UTF8Encoding -ArgumentList $false))' -f (Convert-ToPsSingleQuotedLiteral $exitCodeFile)),
+        'exit $engineExit'
+    ) -join [Environment]::NewLine
+    [System.IO.File]::WriteAllText($runnerScript, $runnerContent, $utf8NoBom)
+
+    $argumentList = @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',('"{0}"' -f $runnerScript))
+    $process = Start-Process -FilePath $nativePowerShell `
         -ArgumentList $argumentList -WorkingDirectory $PayloadRoot `
         -RedirectStandardOutput $stdoutFile -RedirectStandardError $stderrFile `
         -WindowStyle Hidden -PassThru
@@ -272,14 +293,7 @@ try {
         Start-Sleep -Milliseconds 200
         $process.Refresh()
     }
-
-    # Windows PowerShell 5.1 can expose a stale/default ExitCode on the
-    # Start-Process wrapper until the process handle is fully signalled and
-    # refreshed. Wait for the handle, refresh it again, then capture the code
-    # before any other command can affect process state.
     $process.WaitForExit()
-    $process.Refresh()
-    $childExitCode = [int]$process.ExitCode
 
     foreach ($item in @(@{ Path = $stdoutFile; IsError = $false }, @{ Path = $stderrFile; IsError = $true })) {
         if (-not (Test-Path $item.Path)) { continue }
@@ -297,8 +311,17 @@ try {
         }
     }
 
-    $exitCode = $childExitCode
+    if (-not (Test-Path $exitCodeFile)) {
+        throw 'Engine exit code dosyası üretilemedi.'
+    }
+    $rawExitCode = (Get-Content $exitCodeFile -Raw).Trim()
+    $parsedExitCode = 0
+    if (-not [int]::TryParse($rawExitCode, [ref]$parsedExitCode)) {
+        throw "Engine exit code okunamadı: $rawExitCode"
+    }
+    $exitCode = $parsedExitCode
     Write-SessionLog ("Child process exit code: {0}" -f $exitCode)
+
     if ($exitCode -eq 0) {
         $script:LastSuccessfulStep = $script:CurrentStep
         $script:CurrentStep = 'İşlem tamamlandı'
@@ -314,7 +337,7 @@ try {
     try { Write-SessionLog $script:ErrorMessage } catch {}
     try { Write-ProgressEvent 'FAIL' $script:ErrorMessage $exitCode } catch {}
 } finally {
-    Remove-Item $stdoutFile, $stderrFile -Force -ErrorAction SilentlyContinue
+    Remove-Item $stdoutFile, $stderrFile, $exitCodeFile, $runnerScript -Force -ErrorAction SilentlyContinue
     Remove-Item $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
