@@ -15,21 +15,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  release-finalization:
-    name: Build and verify OPERIS_Setup_v6.3.63.exe
+  build-setup:
+    name: Build OPERIS_Setup_v6.3.63.exe
     runs-on: windows-2022
-    timeout-minutes: 120
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v6
-
       - uses: actions/setup-node@v6
         with:
           node-version: "24.21.0"
-
       - name: Verify setup release contract
         shell: pwsh
         run: .\tests\windows\setup-exe-contract.ps1
-
       - name: Production dependency security audit
         shell: pwsh
         run: |
@@ -37,16 +34,12 @@ jobs:
           Push-Location server
           try { npm audit --omit=dev --audit-level=high }
           finally { Pop-Location }
-
       - name: Install Inno Setup compiler when missing
         shell: pwsh
         run: |
           $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
-          if (-not (Test-Path $iscc)) {
-            choco install innosetup -y --no-progress
-          }
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
           if (-not (Test-Path $iscc)) { throw 'ISCC.exe bulunamadı.' }
-
       - name: Build real Windows setup EXE
         shell: pwsh
         run: |
@@ -56,21 +49,133 @@ jobs:
           $exe = '.\dist\installer\OPERIS_Setup_v6.3.63.exe'
           if (-not (Test-Path $exe)) { throw 'OPERIS_Setup_v6.3.63.exe üretilmedi.' }
           if ((Get-Item $exe).Length -lt 1MB) { throw 'Setup EXE beklenmedik derecede küçük.' }
+      - uses: actions/upload-artifact@v7
+        with:
+          name: operis-setup-binary-${{ github.sha }}
+          path: dist/installer/OPERIS_Setup_v6.3.63.exe
+          if-no-files-found: error
+          retention-days: 7
 
-      - name: Run real EXE lifecycle and DB survival validation
+  lifecycle-maintenance:
+    name: EXE lifecycle maintenance
+    needs: build-setup
+    runs-on: windows-2022
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          name: operis-setup-binary-${{ github.sha }}
+          path: dist/installer
+      - name: Run maintenance lifecycle
         shell: pwsh
         run: |
           .\tests\windows\setup-exe-lifecycle.ps1 `
             -SetupExe (Resolve-Path .\dist\installer\OPERIS_Setup_v6.3.63.exe).Path `
-            -EvidencePath (Join-Path $env:RUNNER_TEMP 'operis-setup-exe-lifecycle.json')
+            -EvidencePath (Join-Path $env:RUNNER_TEMP 'maintenance.json') `
+            -Phase Maintenance
+      - uses: actions/upload-artifact@v7
+        with:
+          name: operis-lifecycle-maintenance-${{ github.sha }}
+          path: ${{ runner.temp }}/maintenance.json
+          if-no-files-found: error
+          retention-days: 7
 
+  lifecycle-persistence:
+    name: EXE lifecycle persistence
+    needs: build-setup
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          name: operis-setup-binary-${{ github.sha }}
+          path: dist/installer
+      - name: Run persistence lifecycle
+        shell: pwsh
+        run: |
+          .\tests\windows\setup-exe-lifecycle.ps1 `
+            -SetupExe (Resolve-Path .\dist\installer\OPERIS_Setup_v6.3.63.exe).Path `
+            -EvidencePath (Join-Path $env:RUNNER_TEMP 'persistence.json') `
+            -Phase Persistence
+      - uses: actions/upload-artifact@v7
+        with:
+          name: operis-lifecycle-persistence-${{ github.sha }}
+          path: ${{ runner.temp }}/persistence.json
+          if-no-files-found: error
+          retention-days: 7
+
+  forced-rollback:
+    name: EXE forced rollback
+    needs: build-setup
+    runs-on: windows-2022
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          name: operis-setup-binary-${{ github.sha }}
+          path: dist/installer
       - name: Force update failure and verify rollback health
         shell: pwsh
         run: |
           .\tests\windows\setup-exe-forced-rollback.ps1 `
             -SetupExe (Resolve-Path .\dist\installer\OPERIS_Setup_v6.3.63.exe).Path `
-            -EvidencePath (Join-Path $env:RUNNER_TEMP 'operis-setup-exe-lifecycle.json')
+            -EvidencePath (Join-Path $env:RUNNER_TEMP 'rollback.json') `
+            -BootstrapIfMissing
+      - uses: actions/upload-artifact@v7
+        with:
+          name: operis-lifecycle-rollback-${{ github.sha }}
+          path: ${{ runner.temp }}/rollback.json
+          if-no-files-found: error
+          retention-days: 7
 
+  package-evidence:
+    name: Package release evidence
+    needs:
+      - build-setup
+      - lifecycle-maintenance
+      - lifecycle-persistence
+      - forced-rollback
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: operis-setup-binary-${{ github.sha }}
+          path: dist/installer
+      - uses: actions/download-artifact@v8
+        with:
+          name: operis-lifecycle-maintenance-${{ github.sha }}
+          path: evidence/maintenance
+      - uses: actions/download-artifact@v8
+        with:
+          name: operis-lifecycle-persistence-${{ github.sha }}
+          path: evidence/persistence
+      - uses: actions/download-artifact@v8
+        with:
+          name: operis-lifecycle-rollback-${{ github.sha }}
+          path: evidence/rollback
+      - name: Merge lifecycle evidence
+        shell: pwsh
+        run: |
+          $maintenance = Get-Content .\evidence\maintenance\maintenance.json -Raw | ConvertFrom-Json
+          $persistence = Get-Content .\evidence\persistence\persistence.json -Raw | ConvertFrom-Json
+          $rollback = Get-Content .\evidence\rollback\rollback.json -Raw | ConvertFrom-Json
+          $merged = [ordered]@{}
+          foreach ($source in @($maintenance,$persistence,$rollback)) {
+            foreach ($prop in $source.PSObject.Properties) {
+              $value = $prop.Value
+              if (-not $merged.Contains($prop.Name) -or ($null -ne $value -and [string]$value -notmatch '^NOT_RUN$')) {
+                $merged[$prop.Name] = $value
+              }
+            }
+          }
+          $merged['sourceSha'] = '${{ github.sha }}'
+          $merged['phase'] = 'MergedParallel'
+          $merged | ConvertTo-Json -Depth 6 | Set-Content .\dist\installer\OPERIS_Setup_v6.3.63.lifecycle.json -Encoding UTF8
+          Get-Content .\dist\installer\OPERIS_Setup_v6.3.63.lifecycle.json
       - name: Create SHA256 manifest
         shell: pwsh
         run: |
@@ -78,15 +183,13 @@ jobs:
           $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  OPERIS_Setup_v6.3.63.exe" | Set-Content .\dist\installer\OPERIS_Setup_v6.3.63.exe.sha256 -Encoding ASCII
           Get-Content .\dist\installer\OPERIS_Setup_v6.3.63.exe.sha256
-
       - name: Upload release candidate evidence
-        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: operis-setup-v6.3.63-${{ github.sha }}
           path: |
             dist/installer/OPERIS_Setup_v6.3.63.exe
             dist/installer/OPERIS_Setup_v6.3.63.exe.sha256
-            ${{ runner.temp }}/operis-setup-exe-lifecycle.json
-          if-no-files-found: warn
+            dist/installer/OPERIS_Setup_v6.3.63.lifecycle.json
+          if-no-files-found: error
           retention-days: 30
