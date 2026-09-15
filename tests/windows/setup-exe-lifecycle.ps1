@@ -1,6 +1,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$SetupExe,
-    [string]$EvidencePath = (Join-Path $env:RUNNER_TEMP 'operis-setup-exe-lifecycle.json')
+    [string]$EvidencePath = (Join-Path $env:RUNNER_TEMP 'operis-setup-exe-lifecycle.json'),
+    [ValidateSet('All','Maintenance','Persistence')][string]$Phase = 'All'
 )
 $ErrorActionPreference = 'Stop'
 $InstallRoot = Join-Path $env:ProgramData 'Operis'
@@ -144,6 +145,7 @@ $sentinelSelectSql = ('SELECT count(*) FROM {q}SystemMigration{q} WHERE {q}key{q
 
 $result = [ordered]@{
     sourceSha = $env:GITHUB_SHA
+    phase = $Phase
     cleanInstall = 'NOT_RUN'
     sameVersionRepair = 'NOT_RUN'
     sameVersionRefresh = 'NOT_RUN'
@@ -153,7 +155,7 @@ $result = [ordered]@{
     backupSurvival = 'NOT_RUN'
     reinstall = 'NOT_RUN'
     upgradePath = 'NOT_RUN'
-    realPreviousExeUpgrade = 'NOT_RUN'
+    realPreviousExeUpgrade = 'NOT_RUN_NO_REAL_PREVIOUS_EXE_ARTIFACT'
     repair = 'NOT_RUN'
     startupTask = 'NOT_RUN'
     reboot = 'NOT_TESTED_HOSTED_RUNNER'
@@ -178,78 +180,91 @@ try {
     Set-Content $backupMarker 'KEEP-ME' -Encoding ASCII
     Invoke-AppSql $sentinelInsertSql | Out-Null
 
-    Invoke-SetupExe -MaintenanceAction 'REPAIR'
-    Assert-PreservedState $credentialHash $bindingSignature $envMarker $backupMarker $sentinelSelectSql
-    if ((Get-LastVersionMode) -ne 'REPAIR') { throw 'Same-version default maintenance did not record REPAIR.' }
-    $result.sameVersionRepair = 'PASS'
-    $result.reinstall = 'PASS'
-    $result.ipPreservation = 'PASS'
-    $result.configSurvival = 'PASS'
-    $result.backupSurvival = 'PASS'
+    if ($Phase -in @('All','Maintenance')) {
+        Invoke-SetupExe -MaintenanceAction 'REPAIR'
+        Assert-PreservedState $credentialHash $bindingSignature $envMarker $backupMarker $sentinelSelectSql
+        if ((Get-LastVersionMode) -ne 'REPAIR') { throw 'Same-version default maintenance did not record REPAIR.' }
+        $result.sameVersionRepair = 'PASS'
+        $result.reinstall = 'PASS'
+        $result.ipPreservation = 'PASS'
+        $result.configSurvival = 'PASS'
+        $result.backupSurvival = 'PASS'
 
-    Invoke-SetupExe -MaintenanceAction 'REFRESH'
-    Assert-PreservedState $credentialHash $bindingSignature $envMarker $backupMarker $sentinelSelectSql
-    if ((Get-LastVersionMode) -ne 'REFRESH') { throw 'Same-version maintenance did not record REFRESH.' }
-    $result.sameVersionRefresh = 'PASS'
+        Invoke-SetupExe -MaintenanceAction 'REFRESH'
+        Assert-PreservedState $credentialHash $bindingSignature $envMarker $backupMarker $sentinelSelectSql
+        if ((Get-LastVersionMode) -ne 'REFRESH') { throw 'Same-version maintenance did not record REFRESH.' }
+        $result.sameVersionRefresh = 'PASS'
 
-    Test-SetupConcurrency $credentialHash $bindingSignature $envMarker $backupMarker $sentinelSelectSql
-    $result.setupConcurrency = 'PASS'
+        Test-SetupConcurrency $credentialHash $bindingSignature $envMarker $backupMarker $sentinelSelectSql
+        $result.setupConcurrency = 'PASS'
 
-    Set-Content (Join-Path $InstallRoot 'VERSION.txt') '6.3.62' -Encoding ASCII
-    Invoke-SetupExe
-    Assert-PreservedState $credentialHash $bindingSignature $envMarker $backupMarker $sentinelSelectSql
-    if ((Get-Content (Join-Path $InstallRoot 'VERSION.txt') -Raw).Trim() -ne '6.3.63') { throw 'Upgrade path did not restore target version.' }
-    $result.upgradePath = 'PASS_SIMULATED_PREVIOUS_VERSION_MARKER'
+        Set-Content (Join-Path $InstallRoot 'VERSION.txt') '6.3.62' -Encoding ASCII
+        Invoke-SetupExe
+        Assert-PreservedState $credentialHash $bindingSignature $envMarker $backupMarker $sentinelSelectSql
+        if ((Get-Content (Join-Path $InstallRoot 'VERSION.txt') -Raw).Trim() -ne '6.3.63') { throw 'Upgrade path did not restore target version.' }
+        $result.upgradePath = 'PASS_SIMULATED_PREVIOUS_VERSION_MARKER'
 
-    Remove-Item (Join-Path $InstallRoot 'VERSION.txt') -Force
-    Remove-Item (Join-Path $InstallRoot 'server\dist') -Recurse -Force -ErrorAction SilentlyContinue
-    Invoke-SetupExe
-    Assert-PreservedState $credentialHash $bindingSignature $envMarker $backupMarker $sentinelSelectSql
-    if (-not (Test-Path (Join-Path $InstallRoot 'server\dist'))) { throw 'Repair did not rebuild server/dist.' }
-    $result.repair = 'PASS'
+        Remove-Item (Join-Path $InstallRoot 'VERSION.txt') -Force
+        Remove-Item (Join-Path $InstallRoot 'server\dist') -Recurse -Force -ErrorAction SilentlyContinue
+        Invoke-SetupExe
+        Assert-PreservedState $credentialHash $bindingSignature $envMarker $backupMarker $sentinelSelectSql
+        if (-not (Test-Path (Join-Path $InstallRoot 'server\dist'))) { throw 'Repair did not rebuild server/dist.' }
+        $result.repair = 'PASS'
 
-    $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
-    $null = Get-ScheduledTask -TaskName $BackupTaskName -ErrorAction Stop
-    if (-not ($task.Triggers | Where-Object { $_.CimClass.CimClassName -eq 'MSFT_TaskBootTrigger' })) { throw 'Server task has no boot trigger.' }
-    Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-    Start-ScheduledTask -TaskName $TaskName
-    Assert-Health | Out-Null
-    $result.startupTask = 'PASS'
+        $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+        $null = Get-ScheduledTask -TaskName $BackupTaskName -ErrorAction Stop
+        if (-not ($task.Triggers | Where-Object { $_.CimClass.CimClassName -eq 'MSFT_TaskBootTrigger' })) { throw 'Server task has no boot trigger.' }
+        Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+        Start-ScheduledTask -TaskName $TaskName
+        Assert-Health | Out-Null
+        $result.startupTask = 'PASS'
+    }
 
-    $dailyBackup = Join-Path $InstallRoot 'windows\postgresql-daily-backup.ps1'
-    & $dailyBackup
-    if ($LASTEXITCODE -ne 0) { throw 'Scheduled PostgreSQL backup script failed.' }
-    $dump = Get-ChildItem (Join-Path $InstallRoot 'Backups') -Recurse -Filter 'operis-postgresql-*.dump' -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if (-not $dump) { throw 'Scheduled pg_dump output missing.' }
-    $state = Read-PgState
-    $adminUrl = "postgresql://postgres:$($state.adminPassword)@127.0.0.1:$($state.port)/postgres"
-    & (Join-Path $InstallRoot 'windows\postgresql-restore-test.ps1') -AdminDatabaseUrl $adminUrl -BackupFile $dump.FullName -TestDatabaseName 'operis_release_restore_test'
-    if ($LASTEXITCODE -ne 0) { throw 'Isolated backup restore test failed.' }
-    $result.backupRestore = 'PASS'
+    if ($Phase -in @('All','Persistence')) {
+        $dailyBackup = Join-Path $InstallRoot 'windows\postgresql-daily-backup.ps1'
+        & $dailyBackup
+        if ($LASTEXITCODE -ne 0) { throw 'Scheduled PostgreSQL backup script failed.' }
+        $dump = Get-ChildItem (Join-Path $InstallRoot 'Backups') -Recurse -Filter 'operis-postgresql-*.dump' -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if (-not $dump) { throw 'Scheduled pg_dump output missing.' }
+        $state = Read-PgState
+        $adminUrl = "postgresql://postgres:$($state.adminPassword)@127.0.0.1:$($state.port)/postgres"
+        & (Join-Path $InstallRoot 'windows\postgresql-restore-test.ps1') -AdminDatabaseUrl $adminUrl -BackupFile $dump.FullName -TestDatabaseName 'operis_release_restore_test'
+        if ($LASTEXITCODE -ne 0) { throw 'Isolated backup restore test failed.' }
+        $result.backupRestore = 'PASS'
 
-    $uninstaller = Join-Path $SetupRoot 'unins000.exe'
-    if (-not (Test-Path $uninstaller)) { throw 'Inno uninstaller missing.' }
-    $u = Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
-    if ($u.ExitCode -ne 0) { throw "Uninstall failed: exit=$($u.ExitCode)" }
-    if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) { throw 'Runtime task survived uninstall.' }
-    if (-not (Test-Path $PgRoot)) { throw 'Managed PostgreSQL root was deleted by uninstall.' }
-    if ((Get-FileHash (Join-Path $PgRoot 'credentials.dpapi') -Algorithm SHA256).Hash -ne $credentialHash) { throw 'PostgreSQL credentials changed during uninstall.' }
-    if ((Invoke-AppSql $sentinelSelectSql) -ne '1') { throw 'Database sentinel did not survive uninstall.' }
-    $result.uninstall = 'PASS'
-    $result.dbSurvival = 'PASS'
+        $uninstaller = Join-Path $SetupRoot 'unins000.exe'
+        if (-not (Test-Path $uninstaller)) { throw 'Inno uninstaller missing.' }
+        $u = Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
+        if ($u.ExitCode -ne 0) { throw "Uninstall failed: exit=$($u.ExitCode)" }
+        if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) { throw 'Runtime task survived uninstall.' }
+        if (-not (Test-Path $PgRoot)) { throw 'Managed PostgreSQL root was deleted by uninstall.' }
+        if ((Get-FileHash (Join-Path $PgRoot 'credentials.dpapi') -Algorithm SHA256).Hash -ne $credentialHash) { throw 'PostgreSQL credentials changed during uninstall.' }
+        if ((Invoke-AppSql $sentinelSelectSql) -ne '1') { throw 'Database sentinel did not survive uninstall.' }
+        $result.uninstall = 'PASS'
+        $result.dbSurvival = 'PASS'
 
-    Invoke-SetupExe
-    Assert-Health | Out-Null
-    if ((Invoke-AppSql $sentinelSelectSql) -ne '1') { throw 'Database sentinel did not survive reinstall after uninstall.' }
+        Invoke-SetupExe
+        Assert-Health | Out-Null
+        if ((Invoke-AppSql $sentinelSelectSql) -ne '1') { throw 'Database sentinel did not survive reinstall after uninstall.' }
+        $result.reinstall = 'PASS'
+    }
 }
 finally {
     $result | ConvertTo-Json -Depth 5 | Set-Content $EvidencePath -Encoding UTF8
     Get-Content $EvidencePath
 }
 
-$requiredPass = @('cleanInstall','sameVersionRepair','sameVersionRefresh','setupConcurrency','ipPreservation','configSurvival','backupSurvival','reinstall','repair','startupTask','uninstall','dbSurvival','backupRestore')
-foreach ($key in $requiredPass) {
+$requiredPass = @('cleanInstall')
+if ($Phase -in @('All','Maintenance')) {
+    $requiredPass += @('sameVersionRepair','sameVersionRefresh','setupConcurrency','ipPreservation','configSurvival','backupSurvival','reinstall','repair','startupTask')
+}
+if ($Phase -in @('All','Persistence')) {
+    $requiredPass += @('reinstall','uninstall','dbSurvival','backupRestore')
+}
+foreach ($key in $requiredPass | Select-Object -Unique) {
     if ($result[$key] -ne 'PASS') { throw "Setup EXE lifecycle gate failed: $key=$($result[$key])" }
 }
-if ($result.upgradePath -notlike 'PASS*') { throw 'Setup EXE lifecycle gate failed: simulated upgrade path.' }
-Write-Output 'OPERIS_SETUP_EXE_LIFECYCLE_PASS'
+if ($Phase -in @('All','Maintenance')) {
+    if ($result.upgradePath -notlike 'PASS*') { throw 'Setup EXE lifecycle gate failed: simulated upgrade path.' }
+}
+Write-Output "OPERIS_SETUP_EXE_LIFECYCLE_${Phase}_PASS"
