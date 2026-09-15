@@ -1075,6 +1075,9 @@ try {
 
     Write-Step "Uygulama dosyaları C:\ProgramData\Operis dizinine kuruluyor"
     Copy-ApplicationFiles $backupFolder
+    if ($env:GITHUB_ACTIONS -eq 'true' -and $env:OPERIS_TEST_FORCE_UPDATE_FAILURE -eq 'AFTER_COPY') {
+        throw 'OPERIS_TEST_FORCED_UPDATE_FAILURE'
+    }
     Ensure-Directories
     if ($script:DatabaseState -and $script:DatabaseState.Root -ne $InstallRoot -and (Test-Path (Join-Path $script:PreCutoverRoot 'Data'))) {
         Copy-Item (Join-Path $script:PreCutoverRoot 'Data\*') $DataRoot -Recurse -Force
