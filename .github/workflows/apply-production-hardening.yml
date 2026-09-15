@@ -1,4 +1,4 @@
-name: Apply Production Update Hardening
+name: Apply Production Rollback Health Hardening
 
 on:
   push:
@@ -17,185 +17,52 @@ jobs:
         with:
           ref: production-update-hardening-eee04356
           fetch-depth: 0
-      - name: Patch exact installer blocks
+      - name: Add verified rollback health gate
         shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
           p = Path('windows/install-enterprise.ps1')
           s = p.read_text(encoding='utf-8-sig')
-
-          marker = '$script:InstallMode = "NEW"\n'
-          if marker not in s:
-              raise SystemExit('InstallMode marker missing')
-          s = s.replace(marker, marker + '$script:SameVersionMaintenance = $false\n', 1)
-
-          old_mode = r'''function Get-InstallMode {
-              $versionFile = Join-Path $InstallRoot "VERSION.txt"
-              $database = Join-Path $InstallRoot "server\prisma\yaklasan-isler.db"
-              $legacyDatabase = Join-Path $env:ProgramData "YaklasanIsler\server\prisma\yaklasan-isler.db"
-
-              if (Test-Path $versionFile) {
-                  $script:PreviousVersion = (Get-Content $versionFile -Raw -ErrorAction SilentlyContinue).Trim()
-                  return "UPDATE"
-              }
-              if ((Test-Path $database) -or (Test-Path $legacyDatabase) -or (Test-Path $InstallRoot)) {
-                  return "REPAIR"
-              }
-              return "NEW"
-          }'''
-          new_mode = r'''function Get-InstallMode {
-              $versionFile = Join-Path $InstallRoot "VERSION.txt"
-              $database = Join-Path $InstallRoot "server\prisma\yaklasan-isler.db"
-              $legacyDatabase = Join-Path $env:ProgramData "YaklasanIsler\server\prisma\yaklasan-isler.db"
-
-              if (Test-Path $versionFile) {
-                  $script:PreviousVersion = (Get-Content $versionFile -Raw -ErrorAction SilentlyContinue).Trim()
+          anchor = 'function Restore-RollbackSnapshot {\n'
+          if anchor not in s:
+              raise SystemExit('Restore-RollbackSnapshot anchor missing')
+          helper = r'''function Verify-RollbackHealth {
+              $binding = Get-ExistingOperisNetworkBinding
+              if (-not $binding) { throw "Rollback health için NetworkBinding.json bulunamadı." }
+              $rollbackIp = [string]$binding.ipAddress
+              $rollbackPort = [int]$binding.port
+              if ([string]::IsNullOrWhiteSpace($rollbackIp) -or $rollbackPort -le 0) { throw "Rollback health binding geçersiz." }
+              $lastError = ""
+              for ($attempt = 1; $attempt -le 30; $attempt++) {
                   try {
-                      $installedVersion = [version]$script:PreviousVersion
-                      $targetVersion = [version]$Version
-                      if ($installedVersion -gt $targetVersion) { return "DOWNGRADE_BLOCKED" }
-                      if ($installedVersion -eq $targetVersion) {
-                          $script:SameVersionMaintenance = $true
-                          $maintenanceAction = ([string]$env:OPERIS_MAINTENANCE_ACTION).Trim().ToUpperInvariant()
-                          if ([string]::IsNullOrWhiteSpace($maintenanceAction)) { $maintenanceAction = "REPAIR" }
-                          if ($maintenanceAction -notin @("REPAIR", "REFRESH")) {
-                              throw "SAME_VERSION maintenance action must be REPAIR or REFRESH."
-                          }
-                          return $maintenanceAction
+                      $health = Invoke-RestMethod -Uri "http://${rollbackIp}:$rollbackPort/api/health" -TimeoutSec 5
+                      $versionOk = [string]::IsNullOrWhiteSpace($script:PreviousVersion) -or ([string]$health.version -eq $script:PreviousVersion)
+                      if ($health.ok -and $versionOk -and $health.database.provider -eq "postgresql" -and $health.database.connected) {
+                          Write-Log "Rollback health doğrulaması başarılı. Sürüm: $($health.version)" "WARN"
+                          return $true
                       }
-                  } catch [System.Management.Automation.RuntimeException] {
-                      throw
+                      $lastError = "Rollback health mismatch: ok=$($health.ok), version=$($health.version), provider=$($health.database.provider), connected=$($health.database.connected)"
                   } catch {
-                      Write-Log "Kurulu sürüm karşılaştırılamadı; güvenli UPDATE akışı kullanılacak: $script:PreviousVersion" "WARN"
+                      $lastError = $_.Exception.Message
                   }
-                  return "UPDATE"
+                  Start-Sleep -Seconds 2
               }
-              if ((Test-Path $database) -or (Test-Path $legacyDatabase) -or (Test-Path $InstallRoot)) {
-                  return "REPAIR"
-              }
-              return "NEW"
-          }'''
-          if old_mode not in s:
-              raise SystemExit('Get-InstallMode exact block missing')
-          s = s.replace(old_mode, new_mode, 1)
-
-          start = s.find('function Select-OperisServerIPv4 {')
-          end = s.find('function Save-OperisNetworkBinding {', start)
-          if start < 0 or end < 0:
-              raise SystemExit('Network selection block missing')
-          new_select = r'''function Get-ExistingOperisNetworkBinding {
-              $bindingFile = Join-Path $DataRoot "NetworkBinding.json"
-              if (-not (Test-Path $bindingFile)) { return $null }
-              try {
-                  $binding = Get-Content $bindingFile -Raw | ConvertFrom-Json
-                  if ([string]::IsNullOrWhiteSpace([string]$binding.ipAddress)) { return $null }
-                  return $binding
-              } catch {
-                  Write-Log "Mevcut NetworkBinding.json okunamadı; diğer güvenli seçim kaynaklarına geçiliyor." "WARN"
-                  return $null
-              }
-          }
-
-          function Select-OperisServerIPv4 {
-              $candidates = @(Get-OperisIPv4Candidates)
-              if ($candidates.Count -eq 0) {
-                  throw "Sunucuda yayına uygun aktif IPv4 adresi bulunamadı. Ağ bağdaştırıcısı ve statik IP yapılandırmasını kontrol edin."
-              }
-
-              $explicitIp = ([string]$env:OPERIS_EXPLICIT_BIND_IP).Trim()
-              if (-not [string]::IsNullOrWhiteSpace($explicitIp)) {
-                  $explicit = $candidates | Where-Object { $_.IPAddress -eq $explicitIp } | Select-Object -First 1
-                  if (-not $explicit) { throw "Bu setup oturumunda seçilen IP aktif bir local IPv4 değil: $explicitIp" }
-                  $script:SelectedIPv4 = $explicit.IPAddress
-                  $script:SelectedInterfaceAlias = $explicit.InterfaceAlias
-                  Write-Log "Yayın IP adresi bu setup oturumundaki açık kullanıcı seçimiyle değiştirildi: $($script:SelectedIPv4) [$($script:SelectedInterfaceAlias)]"
-                  return
-              }
-
-              if ($script:InstallMode -ne "NEW") {
-                  $existingBinding = Get-ExistingOperisNetworkBinding
-                  if ($existingBinding) {
-                      $existing = $candidates | Where-Object { $_.IPAddress -eq ([string]$existingBinding.ipAddress) } | Select-Object -First 1
-                      if ($existing) {
-                          $script:SelectedIPv4 = $existing.IPAddress
-                          $script:SelectedInterfaceAlias = $existing.InterfaceAlias
-                          Write-Log "Mevcut NetworkBinding.json korunuyor: $($script:SelectedIPv4) [$($script:SelectedInterfaceAlias)]"
-                          return
-                      }
-                      Write-Log "Mevcut NetworkBinding IP artık aktif bir local NIC üzerinde değil: $($existingBinding.ipAddress)" "WARN"
-                  }
-              }
-
-              $config = Read-OperisServerConfig
-              $configuredIp = ""
-              if ($config.ContainsKey("BIND_IP")) {
-                  $configuredIp = [string]$config["BIND_IP"]
-              }
-
-              if (-not [string]::IsNullOrWhiteSpace($configuredIp) -and
-                  $configuredIp.ToUpperInvariant() -notin @("ASK", "AUTO")) {
-                  $match = $candidates | Where-Object { $_.IPAddress -eq $configuredIp } | Select-Object -First 1
-                  if ($match) {
-                      $script:SelectedIPv4 = $match.IPAddress
-                      $script:SelectedInterfaceAlias = $match.InterfaceAlias
-                      Write-Log "Yayın IP adresi OPERIS_SERVER_CONFIG.ini dosyasından seçildi: $($script:SelectedIPv4) [$($script:SelectedInterfaceAlias)]"
-                      return
-                  }
-                  Write-Log "Config içindeki BIND_IP bu sunucudaki aktif IPv4 adreslerinden biri değil: $configuredIp" "WARN"
-              }
-
-              if ($candidates.Count -eq 1) {
-                  $script:SelectedIPv4 = $candidates[0].IPAddress
-                  $script:SelectedInterfaceAlias = $candidates[0].InterfaceAlias
-                  Write-Log "Tek aktif IPv4 bulundu; yayın adresi otomatik seçildi: $($script:SelectedIPv4) [$($script:SelectedInterfaceAlias)]"
-                  return
-              }
-
-              Write-Host ""
-              Write-Host "Bu sunucuda birden fazla aktif IPv4 adresi bulundu." -ForegroundColor Yellow
-              Write-Host "OPERİS yalnız seçeceğiniz IP adresinden TCP $Port portunda yayın yapacaktır." -ForegroundColor Yellow
-              Write-Host ""
-              for ($i = 0; $i -lt $candidates.Count; $i++) {
-                  $row = $candidates[$i]
-                  Write-Host ("  [{0}] {1}/{2}  -  {3}" -f ($i + 1), $row.IPAddress, $row.PrefixLength, $row.InterfaceAlias) -ForegroundColor Cyan
-              }
-
-              while ($true) {
-                  $answer = Read-Host "Yayın yapılacak IP numarasını seçin (1-$($candidates.Count))"
-                  $number = 0
-                  if ([int]::TryParse($answer, [ref]$number) -and $number -ge 1 -and $number -le $candidates.Count) {
-                      $selected = $candidates[$number - 1]
-                      $script:SelectedIPv4 = $selected.IPAddress
-                      $script:SelectedInterfaceAlias = $selected.InterfaceAlias
-                      Write-Log "Yayın IP adresi kullanıcı tarafından seçildi: $($script:SelectedIPv4) [$($script:SelectedInterfaceAlias)]"
-                      return
-                  }
-                  Write-Host "Geçersiz seçim. 1 ile $($candidates.Count) arasında bir sayı girin." -ForegroundColor Red
-              }
+              throw "Rollback health doğrulaması başarısız: $lastError"
           }
 
           '''
-          s = s[:start] + new_select + s[end:]
-
-          old_log = '    Write-Log "Kurulum modu: $script:InstallMode | Önceki sürüm: $script:PreviousVersion | Hedef sürüm: $Version"\n\n'
-          new_log = old_log + '    if ($script:InstallMode -eq "DOWNGRADE_BLOCKED") { throw "Kurulu OPERIS sürümü hedef sürümden daha yeni; downgrade varsayılan olarak engellendi." }\n\n'
-          if old_log not in s:
-              raise SystemExit('Install mode log marker missing')
-          s = s.replace(old_log, new_log, 1)
-
-          old_db = '    Write-Step "Veritabanı ve Prisma istemcisi hazırlanıyor"\n    Initialize-OperisPostgresql\n'
-          new_db = '''    Write-Step "Veritabanı ve Prisma istemcisi hazırlanıyor"\n    if ($script:SameVersionMaintenance) {\n        Write-Log "Same-version $script:InstallMode: mevcut PostgreSQL şema/verisine db push uygulanmayacak; sağlıklı yönetilen PostgreSQL yeniden kullanılacak."\n    } else {\n        Initialize-OperisPostgresql\n    }\n'''
-          if old_db not in s:
-              raise SystemExit('Initialize PostgreSQL marker missing')
-          s = s.replace(old_db, new_db, 1)
-
+          s = s.replace(anchor, helper + anchor, 1)
+          old = '''        Install-Runner\n        Start-ScheduledTask -TaskName $TaskName\n        Write-Log "Önceki sürüm geri yüklendi." "WARN"\n        return $true\n'''
+          new = '''        Install-Runner\n        Start-ScheduledTask -TaskName $TaskName\n        if (-not (Verify-RollbackHealth)) { throw "Rollback health verification returned false." }\n        Write-Log "Önceki sürüm geri yüklendi ve health doğrulandı." "WARN"\n        return $true\n'''
+          if old not in s:
+              raise SystemExit('Rollback success block missing')
+          s = s.replace(old, new, 1)
           p.write_text(s, encoding='utf-8-sig')
           PY
-
           git config user.name "izdenizai-art"
           git config user.email "izdenizai@gmail.com"
           git add windows/install-enterprise.ps1
           git diff --cached --check
-          git commit -m "Harden same-version maintenance and network binding reuse"
+          git commit -m "Verify application health after rollback"
           git push origin HEAD:production-update-hardening-eee04356
