@@ -1,4 +1,4 @@
-﻿[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
@@ -1100,7 +1100,10 @@ try {
 
     Write-Step "Veritabanı ve Prisma istemcisi hazırlanıyor"
     if ($script:SameVersionMaintenance) {
-        Write-Log "Same-version $script:InstallMode: mevcut PostgreSQL şema/verisine db push uygulanmayacak; sağlıklı yönetilen PostgreSQL yeniden kullanılacak."
+        Copy-Item (Join-Path $InstallRoot 'server\prisma\schema.postgresql.prisma') (Join-Path $InstallRoot 'server\prisma\schema.prisma') -Force
+        $env:DATABASE_URL = $script:Postgres.DatabaseUrl
+        Invoke-Npm (Join-Path $InstallRoot 'server') @('run','prisma:generate')
+        Write-Log "Same-version $script:InstallMode: PostgreSQL Prisma istemcisi yeniden üretildi; mevcut PostgreSQL şema/verisine db push uygulanmayacak."
     } else {
         Initialize-OperisPostgresql
     }
