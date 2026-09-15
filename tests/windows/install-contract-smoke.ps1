@@ -37,6 +37,9 @@ $assertions = [ordered]@{
         $installerSource -match '\$script:SameVersionMaintenance' -and
         $installerSource -match 'db push uygulanmayacak'
     )
+    SameVersionRegeneratesPostgresqlPrismaClient = (
+        $installerSource -match '(?s)if\s*\(\$script:SameVersionMaintenance\)\s*\{.*?schema\.postgresql\.prisma.*?prisma:generate.*?\}\s*else\s*\{\s*Initialize-OperisPostgresql'
+    )
     PrismaGenerate = ($installerText -match 'prisma:generate')
     PrismaPush = ($installerText -match 'prisma:push')
     Build = ($installerText -match '@\("run",\s*"build"\)')
