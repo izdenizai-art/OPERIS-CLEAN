@@ -14,12 +14,12 @@ foreach ($needle in @(
     'Mask-SensitiveText', 'ConvertTo-Json -Compress',
     'RedirectStandardOutput', 'RedirectStandardError',
     'cancelSafe', 'lastSuccessfulStep', 'rollbackStatus', 'rollbackHealth',
-    'PRIVATE KEY', 'DATABASE_URL', 'SNMP',
-    'exit $exitCode'
+    'PRIVATE KEY', 'DATABASE_URL', 'SNMP'
 )) {
     if ($hostText -notmatch [regex]::Escape($needle)) { throw "PROGRESS_HOST_CONTRACT_MISSING: $needle" }
 }
 if ($hostText -notmatch 'credentials\\+\.dpapi') { throw 'PROGRESS_HOST_CONTRACT_MISSING: credentials.dpapi masking regex' }
+if ($hostText -notmatch 'exit\s+(?:\(\[int\]\s*)?\$exitCode\)?') { throw 'PROGRESS_HOST_CONTRACT_MISSING: child exit code propagation' }
 
 $uiText = Get-Content $uiScript -Raw
 foreach ($needle in @(
