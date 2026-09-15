@@ -63,6 +63,13 @@ jobs:
             -SetupExe (Resolve-Path .\dist\installer\OPERIS_Setup_v6.3.63.exe).Path `
             -EvidencePath (Join-Path $env:RUNNER_TEMP 'operis-setup-exe-lifecycle.json')
 
+      - name: Force update failure and verify rollback health
+        shell: pwsh
+        run: |
+          .\tests\windows\setup-exe-forced-rollback.ps1 `
+            -SetupExe (Resolve-Path .\dist\installer\OPERIS_Setup_v6.3.63.exe).Path `
+            -EvidencePath (Join-Path $env:RUNNER_TEMP 'operis-setup-exe-lifecycle.json')
+
       - name: Create SHA256 manifest
         shell: pwsh
         run: |
