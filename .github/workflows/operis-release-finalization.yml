@@ -23,6 +23,16 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: "24.21.0"
+      - name: Verify progress UI contract
+        shell: powershell
+        run: .\tests\windows\progress-ui-contract.ps1
+      - name: Verify progress UI Windows PowerShell 5.1 runtime
+        shell: powershell
+        run: |
+          $evidence = Join-Path $env:RUNNER_TEMP 'progress-ui-evidence.json'
+          powershell.exe -STA -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\tests\windows\progress-ui-runtime.ps1 -EvidencePath $evidence
+          if ($LASTEXITCODE -ne 0) { throw "Progress UI runtime failed: exit=$LASTEXITCODE" }
+          if (-not (Test-Path $evidence)) { throw 'progress-ui-evidence.json üretilmedi.' }
       - name: Verify setup release contract
         shell: pwsh
         run: .\tests\windows\setup-exe-contract.ps1
@@ -54,6 +64,12 @@ jobs:
           path: dist/installer/OPERIS_Setup_v6.3.63.exe
           if-no-files-found: error
           retention-days: 7
+      - uses: actions/upload-artifact@v7
+        with:
+          name: operis-progress-ui-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}/progress-ui-evidence.json
+          if-no-files-found: error
+          retention-days: 30
 
   lifecycle-maintenance:
     name: EXE lifecycle maintenance
@@ -146,6 +162,10 @@ jobs:
           path: dist/installer
       - uses: actions/download-artifact@v8
         with:
+          name: operis-progress-ui-evidence-${{ github.sha }}
+          path: evidence/progress-ui
+      - uses: actions/download-artifact@v8
+        with:
           name: operis-lifecycle-maintenance-${{ github.sha }}
           path: evidence/maintenance
       - uses: actions/download-artifact@v8
@@ -175,6 +195,12 @@ jobs:
           $merged['phase'] = 'MergedParallel'
           $merged | ConvertTo-Json -Depth 6 | Set-Content .\dist\installer\OPERIS_Setup_v6.3.63.lifecycle.json -Encoding UTF8
           Get-Content .\dist\installer\OPERIS_Setup_v6.3.63.lifecycle.json
+      - name: Copy Progress UI evidence
+        shell: pwsh
+        run: |
+          $source = '.\evidence\progress-ui\progress-ui-evidence.json'
+          if (-not (Test-Path $source)) { throw 'Progress UI evidence bulunamadı.' }
+          Copy-Item $source '.\dist\installer\OPERIS_Setup_v6.3.63.progress-ui.json' -Force
       - name: Create SHA256 manifest
         shell: pwsh
         run: |
@@ -190,5 +216,6 @@ jobs:
             dist/installer/OPERIS_Setup_v6.3.63.exe
             dist/installer/OPERIS_Setup_v6.3.63.exe.sha256
             dist/installer/OPERIS_Setup_v6.3.63.lifecycle.json
+            dist/installer/OPERIS_Setup_v6.3.63.progress-ui.json
           if-no-files-found: error
           retention-days: 30
