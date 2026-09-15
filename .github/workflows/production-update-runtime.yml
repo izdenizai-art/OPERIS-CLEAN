@@ -22,6 +22,7 @@ jobs:
         run: |
           $files = @(
             '.\tests\windows\setup-exe-lifecycle.ps1',
+            '.\tests\windows\setup-exe-forced-rollback.ps1',
             '.\windows\install-enterprise.ps1',
             '.\windows\setup-launch.ps1',
             '.\windows\postgresql-provision.ps1'
@@ -47,6 +48,12 @@ jobs:
         shell: pwsh
         run: |
           .\tests\windows\setup-exe-lifecycle.ps1 `
+            -SetupExe (Resolve-Path .\dist\installer\OPERIS_Setup_v6.3.63.exe).Path `
+            -EvidencePath (Join-Path $env:RUNNER_TEMP 'operis-production-hardening-lifecycle.json')
+      - name: Force update failure and verify rollback health
+        shell: pwsh
+        run: |
+          .\tests\windows\setup-exe-forced-rollback.ps1 `
             -SetupExe (Resolve-Path .\dist\installer\OPERIS_Setup_v6.3.63.exe).Path `
             -EvidencePath (Join-Path $env:RUNNER_TEMP 'operis-production-hardening-lifecycle.json')
       - name: Upload diagnostic lifecycle evidence
