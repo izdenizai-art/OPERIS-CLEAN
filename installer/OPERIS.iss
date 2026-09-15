@@ -10,6 +10,7 @@ DisableProgramGroupPage=yes
 PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
+SetupMutex=Global\OPERIS_ENTERPRISE_SETUP
 OutputDir=..\dist\installer
 OutputBaseFilename=OPERIS_Setup_v6.3.63
 Compression=lzma2/ultra64
