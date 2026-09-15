@@ -1,5 +1,6 @@
 param(
-    [Parameter(Mandatory = $true)][string]$PayloadRoot
+    [Parameter(Mandatory = $true)][string]$PayloadRoot,
+    [ValidateSet('','REPAIR','REFRESH')][string]$MaintenanceAction = ''
 )
 $ErrorActionPreference = 'Stop'
 
@@ -17,6 +18,10 @@ if ($PSVersionTable.PSEdition -eq 'Desktop') {
         if ($paths -notcontains $native) { $paths += $native }
     }
     $env:PSModulePath = ($paths | Select-Object -Unique) -join ';'
+}
+
+if (-not [string]::IsNullOrWhiteSpace($MaintenanceAction)) {
+    $env:OPERIS_MAINTENANCE_ACTION = $MaintenanceAction
 }
 
 $hashCompat = Join-Path $PayloadRoot 'windows\sha256-compat.ps1'
