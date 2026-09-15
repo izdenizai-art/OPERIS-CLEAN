@@ -1,4 +1,4 @@
-name: Production Update Hardening RED
+name: Production Update Hardening Verification
 
 on:
   push:
@@ -8,11 +8,31 @@ permissions:
   contents: read
 
 jobs:
-  contract-red:
+  contract:
     runs-on: windows-2022
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
+      - name: Parse changed Windows PowerShell scripts with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $files = @(
+            '.\windows\install-enterprise.ps1',
+            '.\windows\setup-launch.ps1',
+            '.\windows\postgresql-provision.ps1'
+          )
+          $allErrors = @()
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file), [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) { $allErrors += $errors }
+          }
+          if ($allErrors.Count -gt 0) {
+            $allErrors | ForEach-Object { Write-Error "$($_.Extent.File):$($_.Extent.StartLineNumber): $($_.Message)" }
+            exit 1
+          }
+          Write-Output 'POWERSHELL_51_PARSE_PASS'
       - name: Run production update installer contract
         shell: powershell
         run: .\tests\windows\install-contract-smoke.ps1
