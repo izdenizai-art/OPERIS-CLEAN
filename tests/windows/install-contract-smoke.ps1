@@ -32,7 +32,11 @@ $assertions = [ordered]@{
     BackupTask = ($installerText -match '\$BackupTaskName\s*=\s*"OperisEnterpriseDailyBackup"')
     Port = ($installerText -match '\$Port\s*=\s*3001')
     ExactNodeRuntime = ($installerSource -match "nodeVersion -ne 'v24\.21\.0'")
-    PostgreSQLIntegration = ($installerSource -match '(?m)^    Initialize-OperisPostgresql\s*$')
+    PostgreSQLIntegration = (
+        $installerSource -match 'Initialize-OperisPostgresql' -and
+        $installerSource -match '\$script:SameVersionMaintenance' -and
+        $installerSource -match 'db push uygulanmayacak'
+    )
     PrismaGenerate = ($installerText -match 'prisma:generate')
     PrismaPush = ($installerText -match 'prisma:push')
     Build = ($installerText -match '@\("run",\s*"build"\)')
@@ -47,7 +51,11 @@ $assertions = [ordered]@{
     )
     MachineWideSetupMutex = ($issText -match '(?m)^SetupMutex=Global\\OPERIS_ENTERPRISE_SETUP\s*$')
     PostgreSQLProvisionMutex = ($postgresProvisionSource -match 'Global\\OPERIS_POSTGRESQL_PROVISION')
-    SameVersionMaintenanceMode = ($installerSource -match 'SAME_VERSION')
+    SameVersionMaintenanceMode = (
+        $installerSource -match 'SAME_VERSION' -and
+        $installerSource -match 'OPERIS_MAINTENANCE_ACTION' -and
+        $installerSource -match '@\("REPAIR",\s*"REFRESH"\)'
+    )
     ExistingNetworkBindingHelper = ($installerSource -match 'function\s+Get-ExistingOperisNetworkBinding')
     ExistingNetworkBindingPriority = ($installerSource -match 'Mevcut NetworkBinding\.json korunuyor')
     LauncherPreservesExistingBindingBeforeAskFallback = (
