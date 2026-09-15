@@ -1,4 +1,4 @@
-name: Apply Production Rollback Health Hardening
+name: Apply CI-Only Forced Rollback Validation Hook
 
 on:
   push:
@@ -17,46 +17,17 @@ jobs:
         with:
           ref: production-update-hardening-eee04356
           fetch-depth: 0
-      - name: Add verified rollback health gate
+      - name: Add GitHub Actions only forced failure hook
         shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
           p = Path('windows/install-enterprise.ps1')
           s = p.read_text(encoding='utf-8-sig')
-          anchor = 'function Restore-RollbackSnapshot {\n'
-          if anchor not in s:
-              raise SystemExit('Restore-RollbackSnapshot anchor missing')
-          helper = r'''function Verify-RollbackHealth {
-              $binding = Get-ExistingOperisNetworkBinding
-              if (-not $binding) { throw "Rollback health için NetworkBinding.json bulunamadı." }
-              $rollbackIp = [string]$binding.ipAddress
-              $rollbackPort = [int]$binding.port
-              if ([string]::IsNullOrWhiteSpace($rollbackIp) -or $rollbackPort -le 0) { throw "Rollback health binding geçersiz." }
-              $lastError = ""
-              for ($attempt = 1; $attempt -le 30; $attempt++) {
-                  try {
-                      $health = Invoke-RestMethod -Uri "http://${rollbackIp}:$rollbackPort/api/health" -TimeoutSec 5
-                      $versionOk = [string]::IsNullOrWhiteSpace($script:PreviousVersion) -or ([string]$health.version -eq $script:PreviousVersion)
-                      if ($health.ok -and $versionOk -and $health.database.provider -eq "postgresql" -and $health.database.connected) {
-                          Write-Log "Rollback health doğrulaması başarılı. Sürüm: $($health.version)" "WARN"
-                          return $true
-                      }
-                      $lastError = "Rollback health mismatch: ok=$($health.ok), version=$($health.version), provider=$($health.database.provider), connected=$($health.database.connected)"
-                  } catch {
-                      $lastError = $_.Exception.Message
-                  }
-                  Start-Sleep -Seconds 2
-              }
-              throw "Rollback health doğrulaması başarısız: $lastError"
-          }
-
-          '''
-          s = s.replace(anchor, helper + anchor, 1)
-          old = '''        Install-Runner\n        Start-ScheduledTask -TaskName $TaskName\n        Write-Log "Önceki sürüm geri yüklendi." "WARN"\n        return $true\n'''
-          new = '''        Install-Runner\n        Start-ScheduledTask -TaskName $TaskName\n        if (-not (Verify-RollbackHealth)) { throw "Rollback health verification returned false." }\n        Write-Log "Önceki sürüm geri yüklendi ve health doğrulandı." "WARN"\n        return $true\n'''
+          old = '''    Write-Step "Uygulama dosyaları C:\\ProgramData\\Operis dizinine kuruluyor"\n    Copy-ApplicationFiles $backupFolder\n    Ensure-Directories\n'''
+          new = '''    Write-Step "Uygulama dosyaları C:\\ProgramData\\Operis dizinine kuruluyor"\n    Copy-ApplicationFiles $backupFolder\n    if ($env:GITHUB_ACTIONS -eq 'true' -and $env:OPERIS_TEST_FORCE_UPDATE_FAILURE -eq 'AFTER_COPY') {\n        throw 'OPERIS_TEST_FORCED_UPDATE_FAILURE'\n    }\n    Ensure-Directories\n'''
           if old not in s:
-              raise SystemExit('Rollback success block missing')
+              raise SystemExit('Application copy block missing')
           s = s.replace(old, new, 1)
           p.write_text(s, encoding='utf-8-sig')
           PY
@@ -64,5 +35,5 @@ jobs:
           git config user.email "izdenizai@gmail.com"
           git add windows/install-enterprise.ps1
           git diff --cached --check
-          git commit -m "Verify application health after rollback"
+          git commit -m "Add CI-only forced rollback validation hook"
           git push origin HEAD:production-update-hardening-eee04356
