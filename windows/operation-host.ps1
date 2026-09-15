@@ -272,7 +272,14 @@ try {
         Start-Sleep -Milliseconds 200
         $process.Refresh()
     }
+
+    # Windows PowerShell 5.1 can expose a stale/default ExitCode on the
+    # Start-Process wrapper until the process handle is fully signalled and
+    # refreshed. Wait for the handle, refresh it again, then capture the code
+    # before any other command can affect process state.
     $process.WaitForExit()
+    $process.Refresh()
+    $childExitCode = [int]$process.ExitCode
 
     foreach ($item in @(@{ Path = $stdoutFile; IsError = $false }, @{ Path = $stderrFile; IsError = $true })) {
         if (-not (Test-Path $item.Path)) { continue }
@@ -290,7 +297,8 @@ try {
         }
     }
 
-    $exitCode = [int]$process.ExitCode
+    $exitCode = $childExitCode
+    Write-SessionLog ("Child process exit code: {0}" -f $exitCode)
     if ($exitCode -eq 0) {
         $script:LastSuccessfulStep = $script:CurrentStep
         $script:CurrentStep = 'İşlem tamamlandı'
@@ -310,4 +318,4 @@ try {
     Remove-Item $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-exit $exitCode
+exit ([int]$exitCode)
