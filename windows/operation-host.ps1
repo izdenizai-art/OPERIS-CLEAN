@@ -120,6 +120,15 @@ function Resolve-DisplayOperation {
     }
 }
 
+function Update-Step([string]$Step, [int]$Progress, [string]$Line) {
+    if ($script:CurrentStep -and $script:CurrentStep -ne 'Başlatılıyor' -and $script:CurrentStep -ne $Step) {
+        $script:LastSuccessfulStep = $script:CurrentStep
+    }
+    $script:CurrentStep = $Step
+    if ($Progress -gt [int]$script:Progress) { $script:Progress = $Progress }
+    Write-ProgressEvent 'RUNNING' $Line
+}
+
 function Set-ProgressFromLine([string]$Line) {
     $stepMap = @(
         @{ Pattern = 'İşletim sistemi doğrulanıyor'; Step = 'Sistem doğrulanıyor'; Progress = 5 },
@@ -138,12 +147,21 @@ function Set-ProgressFromLine([string]$Line) {
         @{ Pattern = 'başarıyla tamamlandı'; Step = 'İşlem tamamlandı'; Progress = 100 }
     )
 
-    foreach ($entry in $stepMap) {
+    $uninstallMap = @(
+        @{ Pattern = 'Kaldırma: sistem doğrulanıyor'; Step = 'Sistem doğrulanıyor'; Progress = 5 },
+        @{ Pattern = 'Kaldırma: görevler durduruluyor'; Step = 'Uygulama durduruluyor'; Progress = 20 },
+        @{ Pattern = 'Kaldırma: güvenlik duvarı kuralları temizleniyor'; Step = 'Güvenlik duvarı temizleniyor'; Progress = 35 },
+        @{ Pattern = 'Kaldırma: kısayollar kaldırılıyor'; Step = 'Kısayollar kaldırılıyor'; Progress = 45 },
+        @{ Pattern = 'Kaldırma: veri ve yapılandırma korunuyor'; Step = 'Veri ve yapılandırma korunuyor'; Progress = 60 },
+        @{ Pattern = 'Kaldırma: uygulama dosyaları kaldırılıyor'; Step = 'Uygulama dosyaları kaldırılıyor'; Progress = 75 },
+        @{ Pattern = 'Kaldırma: PostgreSQL veri sürekliliği doğrulanıyor'; Step = 'PostgreSQL veri sürekliliği doğrulanıyor'; Progress = 90 },
+        @{ Pattern = 'Kaldırma: işlem tamamlandı|OPERIS_UNINSTALL_APP_REMOVED_DATABASE_PRESERVED_PASS'; Step = 'İşlem tamamlandı'; Progress = 100 }
+    )
+
+    $map = if ($script:ResolvedOperationType -eq 'UNINSTALL') { $uninstallMap } else { $stepMap }
+    foreach ($entry in $map) {
         if ($Line -match $entry.Pattern) {
-            if ($script:CurrentStep -and $script:CurrentStep -ne 'Başlatılıyor') { $script:LastSuccessfulStep = $script:CurrentStep }
-            $script:CurrentStep = $entry.Step
-            if ([int]$entry.Progress -gt [int]$script:Progress) { $script:Progress = [int]$entry.Progress }
-            Write-ProgressEvent 'RUNNING' $Line
+            Update-Step $entry.Step ([int]$entry.Progress) $Line
             break
         }
     }
@@ -178,11 +196,20 @@ if ([string]::IsNullOrWhiteSpace($CurrentVersion)) {
     }
 }
 
-Write-ProgressEvent 'STARTING' 'İşlem hazırlanıyor.'
-if (Test-Path $CancelRequestFile) {
-    Write-SessionLog 'İşlem güvenli başlangıç noktasında kullanıcı tarafından iptal edildi.'
-    Write-ProgressEvent 'CANCELLED' 'İşlem başlatılmadan iptal edildi.' 1223
-    exit 1223
+if ($script:ResolvedOperationType -eq 'UNINSTALL') {
+    $script:CancelSafe = $false
+    Write-ProgressEvent 'STARTING' 'Kaldırma işlemi hazırlanıyor; veri koruma semantiği nedeniyle cancel devre dışı.'
+} else {
+    $script:CancelSafe = $true
+    Write-ProgressEvent 'STARTING' 'İşlem hazırlanıyor; bu güvenli checkpoint sırasında iptal edilebilir.'
+    for ($cancelPoll = 0; $cancelPoll -lt 5; $cancelPoll++) {
+        if (Test-Path $CancelRequestFile) {
+            Write-SessionLog 'İşlem güvenli başlangıç noktasında kullanıcı tarafından iptal edildi.'
+            Write-ProgressEvent 'CANCELLED' 'İşlem başlatılmadan iptal edildi.' 1223
+            exit 1223
+        }
+        Start-Sleep -Milliseconds 200
+    }
 }
 
 $script:CancelSafe = $false
