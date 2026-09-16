@@ -17,11 +17,16 @@ $OutputEncoding = $utf8NoBom
 
 if ([string]::IsNullOrWhiteSpace($SessionId)) { $SessionId = [guid]::NewGuid().ToString('N') }
 $installRoot = Join-Path $env:ProgramData 'Operis'
-$logsRoot = Join-Path $installRoot 'Logs'
-New-Item -ItemType Directory -Path $logsRoot -Force | Out-Null
-if ([string]::IsNullOrWhiteSpace($EventFile)) { $EventFile = Join-Path $logsRoot ("Operation-{0}.events.jsonl" -f $SessionId) }
-if ([string]::IsNullOrWhiteSpace($LogFile)) { $LogFile = Join-Path $logsRoot ("Operation-{0}.log" -f $SessionId) }
-if ([string]::IsNullOrWhiteSpace($CancelRequestFile)) { $CancelRequestFile = Join-Path $logsRoot ("Operation-{0}.cancel" -f $SessionId) }
+$script:InstallRootExistedAtStart = Test-Path $installRoot
+$defaultLogsRoot = if ($script:InstallRootExistedAtStart) {
+    Join-Path $installRoot 'Logs'
+} else {
+    Join-Path (Join-Path $env:ProgramData 'Operis-Setup') 'Logs'
+}
+New-Item -ItemType Directory -Path $defaultLogsRoot -Force | Out-Null
+if ([string]::IsNullOrWhiteSpace($EventFile)) { $EventFile = Join-Path $defaultLogsRoot ("Operation-{0}.events.jsonl" -f $SessionId) }
+if ([string]::IsNullOrWhiteSpace($LogFile)) { $LogFile = Join-Path $defaultLogsRoot ("Operation-{0}.log" -f $SessionId) }
+if ([string]::IsNullOrWhiteSpace($CancelRequestFile)) { $CancelRequestFile = Join-Path $defaultLogsRoot ("Operation-{0}.cancel" -f $SessionId) }
 
 $script:Progress = 0
 $script:CurrentStep = 'Başlatılıyor'
@@ -104,7 +109,7 @@ function Resolve-DisplayOperation {
     if ($OperationType -ne 'AUTO') { return $OperationType }
     $versionFile = Join-Path $installRoot 'VERSION.txt'
     if (-not (Test-Path $versionFile)) {
-        if (Test-Path $installRoot) { return 'REPAIR' }
+        if ($script:InstallRootExistedAtStart) { return 'REPAIR' }
         return 'INSTALL'
     }
     try {
@@ -113,7 +118,11 @@ function Resolve-DisplayOperation {
         $installedVersion = [version]$existing
         $target = [version]$TargetVersion
         if ($installedVersion -lt $target) { return 'UPDATE' }
-        if ($installedVersion -eq $target) { return 'REPAIR' }
+        if ($installedVersion -eq $target) {
+            $requestedMaintenance = ([string]$env:OPERIS_MAINTENANCE_ACTION).Trim().ToUpperInvariant()
+            if ($requestedMaintenance -in @('REPAIR','REFRESH')) { return $requestedMaintenance }
+            return 'REPAIR'
+        }
         return 'UPDATE'
     } catch {
         return 'REPAIR'
