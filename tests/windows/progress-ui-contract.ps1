@@ -14,7 +14,8 @@ foreach ($needle in @(
     'Mask-SensitiveText', 'ConvertTo-Json -Compress',
     'RedirectStandardOutput', 'RedirectStandardError',
     'cancelSafe', 'lastSuccessfulStep', 'rollbackStatus', 'rollbackHealth',
-    'PRIVATE KEY', 'DATABASE_URL', 'SNMP'
+    'PRIVATE KEY', 'DATABASE_URL', 'SNMP',
+    'InstallRootExistedAtStart', 'Operis-Setup'
 )) {
     if ($hostText -notmatch [regex]::Escape($needle)) { throw "PROGRESS_HOST_CONTRACT_MISSING: $needle" }
 }
@@ -26,7 +27,10 @@ foreach ($needle in @(
     'System.Windows.Forms', 'ProgressBar', 'TextBox', 'ShortcutsEnabled',
     'Tümünü Kopyala', 'Log Klasörünü Aç', 'Detayları Göster',
     'Cancel', 'Başarıyla tamamlandı', 'İşlem başarısız',
-    'ProbeOnly', 'Silent', 'operation-host.ps1', 'exit $engineExitCode'
+    'ProbeOnly', 'Silent', 'operation-host.ps1', 'exit $engineExitCode',
+    'InstallRootExistedAtStart', 'Operis-Setup',
+    'Invoke-RestMethod', 'database.provider', 'database.connected',
+    'Health:', 'DB:', 'MistyRose', 'DarkRed', 'rollbackHealth'
 )) {
     if ($uiText -notmatch [regex]::Escape($needle)) { throw "PROGRESS_UI_CONTRACT_MISSING: $needle" }
 }
