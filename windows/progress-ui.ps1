@@ -107,6 +107,47 @@ function New-ProgressControls {
     }
 }
 
+function Set-RollbackFailureAppearance($Controls) {
+    $Controls.Form.BackColor = [System.Drawing.Color]::MistyRose
+    $Controls.Title.ForeColor = [System.Drawing.Color]::DarkRed
+    $Controls.Title.Text = 'Rollback başarısız'
+}
+
+function Format-HealthSummary([string]$HealthStatus, [string]$Provider, [string]$Connectivity) {
+    if ([string]::IsNullOrWhiteSpace($HealthStatus)) { $HealthStatus = 'UNKNOWN' }
+    if ([string]::IsNullOrWhiteSpace($Provider)) { $Provider = 'unknown' }
+    if ([string]::IsNullOrWhiteSpace($Connectivity)) { $Connectivity = 'unknown' }
+    return ('Health: {0}    DB: {1} / {2}' -f $HealthStatus, $Provider, $Connectivity)
+}
+
+function Get-FinalHealthSummary {
+    $bindingPath = Join-Path $env:ProgramData 'Operis\Data\NetworkBinding.json'
+    if (-not (Test-Path $bindingPath)) {
+        return (Format-HealthSummary 'UNKNOWN' 'unknown' 'binding-unavailable')
+    }
+
+    try {
+        $binding = Get-Content $bindingPath -Raw | ConvertFrom-Json
+        $healthUri = ''
+        if (-not [string]::IsNullOrWhiteSpace([string]$binding.publicUrl)) {
+            $healthUri = ([string]$binding.publicUrl).TrimEnd('/') + '/api/health'
+        } elseif ($binding.ipAddress -and $binding.port) {
+            $healthUri = 'http://{0}:{1}/api/health' -f $binding.ipAddress, $binding.port
+        }
+        if ([string]::IsNullOrWhiteSpace($healthUri)) {
+            return (Format-HealthSummary 'UNKNOWN' 'unknown' 'endpoint-unavailable')
+        }
+
+        $health = Invoke-RestMethod -Uri $healthUri -TimeoutSec 5
+        $healthStatus = if ([bool]$health.ok) { 'PASS' } else { 'FAIL' }
+        $provider = if ($health.database -and $health.database.provider) { [string]$health.database.provider } else { 'unknown' }
+        $connectivity = if ($health.database -and [bool]$health.database.connected) { 'connected' } else { 'disconnected' }
+        return (Format-HealthSummary $healthStatus $provider $connectivity)
+    } catch {
+        return (Format-HealthSummary 'UNKNOWN' 'unavailable' 'unavailable')
+    }
+}
+
 if ($ProbeOnly) {
     $controls = New-ProgressControls
     $controls.Details.Text = 'COPY_PROBE_TEXT'
@@ -118,6 +159,9 @@ if ($ProbeOnly) {
     } catch {
         $copyWorks = $false
     }
+    Set-RollbackFailureAppearance $controls
+    $rollbackFailureRed = ($controls.Form.BackColor -eq [System.Drawing.Color]::MistyRose -and $controls.Title.ForeColor -eq [System.Drawing.Color]::DarkRed)
+    $healthSurface = ((Format-HealthSummary 'PASS' 'postgresql' 'connected') -eq 'Health: PASS    DB: postgresql / connected')
     [ordered]@{
         logSelectable = ($controls.Details.ReadOnly -and $controls.Details.Multiline -and $controls.Details.ShortcutsEnabled)
         copyWorks = $copyWorks
@@ -125,6 +169,8 @@ if ($ProbeOnly) {
         detailsToggle = ($controls.Toggle.Text -match 'Detayları')
         cancelButton = ($controls.Cancel.Text -eq 'Cancel')
         progressBar = ($controls.ProgressBar.Maximum -eq 100)
+        rollbackFailureRed = $rollbackFailureRed
+        finalHealthSurface = $healthSurface
         powershell51 = ($PSVersionTable.PSEdition -eq 'Desktop' -and $PSVersionTable.PSVersion.Major -eq 5)
     } | ConvertTo-Json -Compress
     $controls.Form.Dispose()
@@ -136,7 +182,13 @@ $hostScript = Join-Path $PayloadRoot 'windows\operation-host.ps1'
 if (-not (Test-Path $hostScript)) { throw "operation-host.ps1 bulunamadı: $hostScript" }
 
 $sessionId = [guid]::NewGuid().ToString('N')
-$logsRoot = Join-Path $env:ProgramData 'Operis\Logs'
+$installRoot = Join-Path $env:ProgramData 'Operis'
+$script:InstallRootExistedAtStart = Test-Path $installRoot
+$logsRoot = if ($script:InstallRootExistedAtStart) {
+    Join-Path $installRoot 'Logs'
+} else {
+    Join-Path (Join-Path $env:ProgramData 'Operis-Setup') 'Logs'
+}
 New-Item -ItemType Directory -Path $logsRoot -Force | Out-Null
 $eventFile = Join-Path $logsRoot ("Operation-{0}.events.jsonl" -f $sessionId)
 $logFile = Join-Path $logsRoot ("Operation-{0}.log" -f $sessionId)
@@ -211,7 +263,11 @@ $timer.Interval = 250
 $timer.Add_Tick({
     $elapsed = (Get-Date) - $startedAt
     $lastSuccessful = if ($script:lastEvent -and $script:lastEvent.lastSuccessfulStep) { [string]$script:lastEvent.lastSuccessfulStep } else { '-' }
-    $controls.Status.Text = 'Geçen süre: {0:hh\:mm\:ss}    Son başarılı adım: {1}' -f $elapsed, $lastSuccessful
+    $rollbackSuffix = ''
+    if ($script:lastEvent -and ($script:lastEvent.rollbackStatus -ne 'NOT_STARTED' -or $script:lastEvent.rollbackHealth -ne 'NOT_RUN')) {
+        $rollbackSuffix = '    Rollback: {0} / {1}' -f $script:lastEvent.rollbackStatus, $script:lastEvent.rollbackHealth
+    }
+    $controls.Status.Text = ('Geçen süre: {0:hh\:mm\:ss}    Son başarılı adım: {1}{2}' -f $elapsed, $lastSuccessful, $rollbackSuffix)
 
     if (Test-Path $logFile) {
         try {
@@ -237,10 +293,17 @@ $timer.Add_Tick({
                 $p = [Math]::Max(0, [Math]::Min(100, [int]$event.progress))
                 if ($p -ge $controls.ProgressBar.Value) { $controls.ProgressBar.Value = $p }
                 $controls.Cancel.Enabled = ([bool]$event.cancelSafe -and -not $process.HasExited)
+
+                if (($event.rollbackStatus -eq 'FAILED') -or ($event.rollbackHealth -eq 'FAIL')) {
+                    Set-RollbackFailureAppearance $controls
+                }
+
                 if ($event.status -eq 'FAIL') {
                     $controls.Form.Height = 430
                     $controls.Details.Visible = $true
                     $controls.Toggle.Text = 'Detayları Gizle'
+                    $eventText = "`r`nHata: $($event.message)`r`nExit code: $($event.exitCode)`r`nRollback: $($event.rollbackStatus) / $($event.rollbackHealth)"
+                    if (-not $controls.Details.Text.Contains($eventText)) { $controls.Details.AppendText($eventText) }
                 }
             }
         } catch {}
@@ -252,12 +315,29 @@ $timer.Add_Tick({
         $script:engineExitCode = [int]$process.ExitCode
         $controls.Cancel.Enabled = $false
         $controls.Finish.Enabled = $true
+        $finalElapsed = (Get-Date) - $startedAt
+        $finalLastSuccessful = if ($script:lastEvent -and $script:lastEvent.lastSuccessfulStep) { [string]$script:lastEvent.lastSuccessfulStep } else { '-' }
+        $effectiveOperation = if ($script:lastEvent -and $script:lastEvent.operationType) { [string]$script:lastEvent.operationType } else { $OperationType }
+
         if ($script:engineExitCode -eq 0) {
             $controls.Title.Text = 'Başarıyla tamamlandı'
             $controls.ProgressBar.Value = 100
-            $controls.OpenApp.Enabled = ($OperationType -ne 'UNINSTALL')
+            $healthSummary = if ($effectiveOperation -eq 'UNINSTALL') {
+                Format-HealthSummary 'N/A' 'preserved' 'not-applicable'
+            } else {
+                Get-FinalHealthSummary
+            }
+            $controls.Status.Text = ('Süre: {0:hh\:mm\:ss}    Son başarılı adım: {1}`r`n{2}' -f $finalElapsed, $finalLastSuccessful, $healthSummary)
+            $controls.OpenApp.Enabled = ($effectiveOperation -ne 'UNINSTALL')
         } else {
-            $controls.Title.Text = 'İşlem başarısız'
+            if ($script:lastEvent -and (($script:lastEvent.rollbackStatus -eq 'FAILED') -or ($script:lastEvent.rollbackHealth -eq 'FAIL'))) {
+                Set-RollbackFailureAppearance $controls
+            } else {
+                $controls.Title.Text = 'İşlem başarısız'
+                $controls.Title.ForeColor = [System.Drawing.Color]::DarkRed
+                $controls.Form.BackColor = [System.Drawing.Color]::MistyRose
+            }
+            $controls.Status.Text = ('Süre: {0:hh\:mm\:ss}    Son başarılı adım: {1}' -f $finalElapsed, $finalLastSuccessful)
             $controls.Form.Height = 430
             $controls.Details.Visible = $true
             $controls.Toggle.Text = 'Detayları Gizle'
