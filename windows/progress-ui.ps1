@@ -327,7 +327,7 @@ $timer.Add_Tick({
             } else {
                 Get-FinalHealthSummary
             }
-            $controls.Status.Text = ('Süre: {0:hh\:mm\:ss}    Son başarılı adım: {1}`r`n{2}' -f $finalElapsed, $finalLastSuccessful, $healthSummary)
+            $controls.Status.Text = ('Süre: {0:hh\:mm\:ss}    Son başarılı adım: {1}' -f $finalElapsed, $finalLastSuccessful) + [Environment]::NewLine + $healthSummary
             $controls.OpenApp.Enabled = ($effectiveOperation -ne 'UNINSTALL')
         } else {
             if ($script:lastEvent -and (($script:lastEvent.rollbackStatus -eq 'FAILED') -or ($script:lastEvent.rollbackHealth -eq 'FAIL'))) {
