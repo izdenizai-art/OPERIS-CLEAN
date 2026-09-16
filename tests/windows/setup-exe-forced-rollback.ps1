@@ -8,15 +8,39 @@ $InstallRoot = Join-Path $env:ProgramData 'Operis'
 $PgRoot = Join-Path $env:ProgramData 'OperisPostgreSQL'
 $SetupRoot = Join-Path $env:ProgramData 'Operis-Setup'
 
+function Write-SetupDiagnostics([string]$SetupLog) {
+    if (Test-Path $SetupLog) {
+        Write-Host "===== INNO SETUP LOG: $SetupLog ====="
+        Get-Content $SetupLog -Tail 250 -ErrorAction SilentlyContinue
+    }
+    $logsRoot = Join-Path $InstallRoot 'Logs'
+    if (Test-Path $logsRoot) {
+        $operationFiles = @(
+            Get-ChildItem $logsRoot -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -like 'Operation-*.log' -or $_.Name -like 'Operation-*.events.jsonl' } |
+                Sort-Object LastWriteTime -Descending |
+                Select-Object -First 8
+        )
+        foreach ($file in $operationFiles) {
+            Write-Host "===== MASKED OPERATION LOG: $($file.FullName) ====="
+            Get-Content $file.FullName -Tail 250 -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 function Invoke-SetupExe {
     $setupLog = Join-Path $env:RUNNER_TEMP 'operis-forced-rollback-bootstrap.log'
     $p = Start-Process -FilePath $SetupExe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',("/LOG=$setupLog") -PassThru
     if (-not $p.WaitForExit(30 * 60 * 1000)) {
         try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch {}
+        Write-SetupDiagnostics $setupLog
         throw 'Bootstrap setup timed out.'
     }
     $p.Refresh()
-    if ($p.ExitCode -ne 0) { throw "Bootstrap setup failed: exit=$($p.ExitCode)" }
+    if ($p.ExitCode -ne 0) {
+        Write-SetupDiagnostics $setupLog
+        throw "Bootstrap setup failed: exit=$($p.ExitCode)"
+    }
 }
 function Get-Binding {
     $path = Join-Path $InstallRoot 'Data\NetworkBinding.json'
