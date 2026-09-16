@@ -130,12 +130,14 @@ $results['PROGRESS_CANCEL_SAFE_CHECKPOINT'] = 'PASS'
 $probeJson = & powershell.exe -STA -NoLogo -NoProfile -ExecutionPolicy Bypass -File $uiScript -ProbeOnly
 if ($LASTEXITCODE -ne 0) { throw "UI probe failed: $LASTEXITCODE" }
 $probe = ($probeJson -join "`n") | ConvertFrom-Json
-foreach ($property in @('logSelectable','copyWorks','logFolderButton','detailsToggle','cancelButton','progressBar','powershell51')) {
+foreach ($property in @('logSelectable','copyWorks','logFolderButton','detailsToggle','cancelButton','progressBar','rollbackFailureRed','finalHealthSurface','powershell51')) {
     if (-not [bool]$probe.$property) { throw "UI probe failed property: $property" }
 }
 $results['PROGRESS_LOG_SELECTABLE'] = 'PASS'
 $results['PROGRESS_LOG_COPY'] = 'PASS'
 $results['PROGRESS_LOG_FOLDER'] = 'PASS'
+$results['PROGRESS_ROLLBACK_FAILURE_RED'] = 'PASS'
+$results['PROGRESS_FINAL_HEALTH_SURFACE'] = 'PASS'
 $results['WINDOWS_POWERSHELL_51_UI_RUNTIME'] = 'PASS'
 
 $evidence = [ordered]@{
