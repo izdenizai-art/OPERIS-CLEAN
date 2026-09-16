@@ -63,10 +63,29 @@ function Ensure-OperisPostgresql {
             $plain = [Security.Cryptography.ProtectedData]::Unprotect([IO.File]::ReadAllBytes($stateFile),$null,[Security.Cryptography.DataProtectionScope]::LocalMachine)
             try { $state = [Text.Encoding]::UTF8.GetString($plain) | ConvertFrom-Json }
             finally { [Array]::Clear($plain,0,$plain.Length) }
-            if ($state.service -ne $ServiceName -or $state.port -ne $DatabasePort -or $state.root -ne $Root) { throw 'PostgreSQL identity changed; refusing reuse.' }
+            if ($state.port -ne $DatabasePort -or $state.root -ne $Root) { throw 'PostgreSQL identity changed; refusing reuse.' }
+            if ($state.service -ne $ServiceName) {
+                $storedService = Get-CimInstance Win32_Service -Filter ("Name='" + [string]$state.service + "'") -ErrorAction SilentlyContinue
+                if ($storedService -and $storedService.PathName.Contains($prefix) -and $storedService.PathName.Contains($data)) {
+                    $ServiceName = [string]$state.service
+                    $service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+                } elseif ($storedService) { throw 'Stored PostgreSQL service points to an unexpected installation.' }
+            }
+        }
+        if (-not $service -and (Test-Path (Join-Path $data 'PG_VERSION'))) {
+            $ownedExistingServices = @(Get-CimInstance Win32_Service | Where-Object { $_.PathName -and $_.PathName.Contains($prefix) -and $_.PathName.Contains($data) })
+            if ($ownedExistingServices.Count -eq 1) {
+                $service = Get-Service -Name $ownedExistingServices[0].Name -ErrorAction Stop
+                $ServiceName = [string]$ownedExistingServices[0].Name
+                $state.service = $ServiceName
+                $plain = [Text.Encoding]::UTF8.GetBytes(($state | ConvertTo-Json -Compress))
+                try {
+                    $protected = [Security.Cryptography.ProtectedData]::Protect($plain,$null,[Security.Cryptography.DataProtectionScope]::LocalMachine)
+                    [IO.File]::WriteAllBytes($stateFile,$protected)
+                } finally { [Array]::Clear($plain,0,$plain.Length) }
+            } else { throw 'Existing cluster without service; automatic recreation refused.' }
         }
         if (-not $service) {
-            if (Test-Path (Join-Path $data 'PG_VERSION')) { throw 'Existing cluster without service; automatic recreation refused.' }
             $installer = Join-Path $Root 'postgresql-16.14-2-windows-x64.exe'
             $expectedHash = '6D3919BC23CFB45E79C6E391DE8B689C32101F2C1B73377AA26E4CE593C0EF28'
             if (-not (Test-Path $installer)) {
@@ -103,7 +122,19 @@ function Ensure-OperisPostgresql {
             if (-not (Test-Path (Join-Path $bin $tool))) { throw "Missing PostgreSQL tool: $tool" }
         }
         $serviceInfo = Get-CimInstance Win32_Service -Filter "Name='$ServiceName'"
-        if (-not $serviceInfo -or -not $serviceInfo.PathName.Contains($prefix) -or -not $serviceInfo.PathName.Contains($data)) { throw 'PostgreSQL service points to an unexpected installation.' }
+        if (-not $serviceInfo) {
+            $ownedServices = @(Get-CimInstance Win32_Service | Where-Object { $_.PathName -and $_.PathName.Contains($prefix) -and $_.PathName.Contains($data) })
+            if ($ownedServices.Count -ne 1) { throw 'PostgreSQL service points to an unexpected installation.' }
+            $serviceInfo = $ownedServices[0]
+            $ServiceName = [string]$serviceInfo.Name
+            $state.service = $ServiceName
+            $plain = [Text.Encoding]::UTF8.GetBytes(($state | ConvertTo-Json -Compress))
+            try {
+                $protected = [Security.Cryptography.ProtectedData]::Protect($plain,$null,[Security.Cryptography.DataProtectionScope]::LocalMachine)
+                [IO.File]::WriteAllBytes($stateFile,$protected)
+            } finally { [Array]::Clear($plain,0,$plain.Length) }
+        }
+        if (-not $serviceInfo.PathName.Contains($prefix) -or -not $serviceInfo.PathName.Contains($data)) { throw 'PostgreSQL service points to an unexpected installation.' }
         Set-Service -Name $ServiceName -StartupType Automatic
         Start-Service -Name $ServiceName
         $oldPassword = $env:PGPASSWORD
