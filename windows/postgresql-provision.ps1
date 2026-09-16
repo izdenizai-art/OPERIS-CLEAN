@@ -89,7 +89,7 @@ function Ensure-OperisPostgresql {
                 'disable-components=pgAdmin,stackbuilder',"prefix=$prefix","datadir=$data",
                 "serverport=$DatabasePort","servicename=$ServiceName",'superaccount=postgres',
                 "superpassword=$($state.adminPassword)",'serviceaccount=NT AUTHORITY\NetworkService',
-                'enable_acledit=1','install_runtimes=1','debuglevel=0'
+                'locale=C','enable_acledit=1','install_runtimes=1','debuglevel=0'
             )
             try {
                 [IO.File]::WriteAllLines($optionFile,$options,[Text.UTF8Encoding]::new($false))
