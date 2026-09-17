@@ -180,7 +180,9 @@ function Verify-RollbackHealth {
         try {
             $health = Invoke-RestMethod -Uri "http://${rollbackIp}:$rollbackPort/api/health" -TimeoutSec 5
             $versionOk = [string]::IsNullOrWhiteSpace($script:PreviousVersion) -or ([string]$health.version -eq $script:PreviousVersion)
-            if ($health.ok -and $versionOk -and $health.database.provider -eq "postgresql" -and $health.database.connected) {
+            $expectsPostgresql = $script:DatabaseState -and -not $script:DatabaseState.SQLite
+            $databaseOk = if ($expectsPostgresql) { $health.database.provider -eq "postgresql" -and $health.database.connected } else { $true }
+            if ($health.ok -and $versionOk -and $databaseOk) {
                 Write-Log "Rollback health doğrulaması başarılı. Sürüm: $($health.version)" "WARN"
                 return $true
             }
@@ -1099,7 +1101,7 @@ try {
     Ensure-EnvironmentFile
 
     Write-Step "Veritabanı ve Prisma istemcisi hazırlanıyor"
-    if ($script:SameVersionMaintenance) {
+    if ($script:SameVersionMaintenance -and $script:DatabaseState -and -not $script:DatabaseState.SQLite) {
         Copy-Item (Join-Path $InstallRoot 'server\prisma\schema.postgresql.prisma') (Join-Path $InstallRoot 'server\prisma\schema.prisma') -Force
         $env:DATABASE_URL = $script:Postgres.DatabaseUrl
         Invoke-Npm (Join-Path $InstallRoot 'server') @('run','prisma:generate')
