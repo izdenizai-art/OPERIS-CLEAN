@@ -30,7 +30,8 @@ foreach ($needle in @(
     'ProbeOnly', 'Silent', 'operation-host.ps1', 'exit $engineExitCode',
     'InstallRootExistedAtStart', 'Operis-Setup',
     'Invoke-RestMethod', 'database.provider', 'database.connected',
-    'Health:', 'DB:', 'MistyRose', 'DarkRed', 'rollbackHealth'
+    'Health:', 'DB:', 'MistyRose', 'DarkRed', 'rollbackHealth',
+    'IsNullOrWhiteSpace($env:ProgramData)', 'CommonApplicationData'
 )) {
     if ($uiText -notmatch [regex]::Escape($needle)) { throw "PROGRESS_UI_CONTRACT_MISSING: $needle" }
 }
