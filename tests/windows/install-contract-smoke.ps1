@@ -92,4 +92,73 @@ if ($failed.Count -gt 0) {
     throw "Windows install contract FAIL: $($failed.Key -join ', ')"
 }
 
+# Runtime regression: VersionHistory.json may be transiently locked by another process
+# immediately after the server health check. The installer must retry and preserve history.
+$tokens = $null
+$parseErrors = $null
+$installerAst = [System.Management.Automation.Language.Parser]::ParseFile($installer, [ref]$tokens, [ref]$parseErrors)
+if ($parseErrors.Count -gt 0) { throw "Installer parse error before VersionHistory lock test." }
+$historyFunction = $installerAst.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Save-VersionHistory'
+}, $true)
+if (-not $historyFunction) { throw 'Save-VersionHistory function not found.' }
+Invoke-Expression $historyFunction.Extent.Text
+
+$historyTestRoot = Join-Path $env:TEMP ('operis-version-history-lock-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $historyTestRoot -Force | Out-Null
+$script:DataRoot = $historyTestRoot
+$script:InstallMode = 'REPAIR'
+$script:PreviousVersion = '6.3.63'
+$BackupsRoot = Join-Path $historyTestRoot 'Backups'
+function Ensure-Directories { New-Item -ItemType Directory -Path $script:DataRoot -Force | Out-Null }
+function Write-Log([string]$Message,[string]$Level='INFO') { }
+
+$historyFile = Join-Path $historyTestRoot 'VersionHistory.json'
+@([pscustomobject]@{
+    installedAt = '2026-09-18T00:00:00+03:00'
+    computer = 'TEST'
+    user = 'TEST'
+    mode = 'REPAIR'
+    previousVersion = '6.3.63'
+    newVersion = '6.3.63'
+    status = 'SUCCESS'
+    backupRoot = ''
+    message = 'existing'
+}) | ConvertTo-Json -Depth 5 | Set-Content $historyFile -Encoding UTF8
+
+$lockMarker = Join-Path $historyTestRoot 'lock.marker'
+$lockJob = Start-Job -ArgumentList $historyFile,$lockMarker -ScriptBlock {
+    param($file,$markerPath)
+    $stream = [System.IO.File]::Open($file,[System.IO.FileMode]::Open,[System.IO.FileAccess]::ReadWrite,[System.IO.FileShare]::None)
+    try {
+        [System.IO.File]::WriteAllText($markerPath,'locked')
+        Start-Sleep -Milliseconds 1600
+    } finally {
+        $stream.Dispose()
+    }
+}
+
+try {
+    $lockDeadline = (Get-Date).AddSeconds(5)
+    while (-not (Test-Path $lockMarker) -and (Get-Date) -lt $lockDeadline) { Start-Sleep -Milliseconds 50 }
+    if (-not (Test-Path $lockMarker)) { throw 'VersionHistory test lock was not acquired.' }
+
+    $historyFailure = $null
+    try { Save-VersionHistory 'SUCCESS' 'lock-retry-test' } catch { $historyFailure = $_ }
+    Wait-Job $lockJob -Timeout 5 | Out-Null
+    if ($historyFailure) { throw $historyFailure }
+
+    $historyRows = @(Get-Content $historyFile -Raw | ConvertFrom-Json)
+    if ($historyRows.Count -ne 2) { throw "VersionHistory transient-lock retry did not preserve the existing row." }
+    if ($historyRows[-1].status -ne 'SUCCESS' -or $historyRows[-1].message -ne 'lock-retry-test') {
+        throw 'VersionHistory transient-lock retry did not append the new row.'
+    }
+    Write-Host 'VersionHistoryTransientLockRetry: PASS'
+} finally {
+    Stop-Job $lockJob -ErrorAction SilentlyContinue
+    Remove-Job $lockJob -Force -ErrorAction SilentlyContinue
+    Remove-Item $historyTestRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 Write-Host "OPERIS Windows install contract PASS"
