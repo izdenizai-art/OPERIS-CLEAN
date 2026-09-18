@@ -248,15 +248,13 @@ function Save-VersionHistory([string]$Status, [string]$Message = "") {
         try {
             $history = @()
             if (Test-Path $historyFile) {
+                $rawHistory = Get-Content $historyFile -Raw -ErrorAction Stop
                 try {
-                    $loaded = Get-Content $historyFile -Raw -ErrorAction Stop | ConvertFrom-Json
+                    $loaded = $rawHistory | ConvertFrom-Json -ErrorAction Stop
                     if ($loaded) { $history = @($loaded) }
                 }
-                catch [System.IO.IOException] {
-                    throw
-                }
                 catch {
-                    Write-Log "Sürüm geçmişi okunamadı; yeni dosya oluşturulacak." "WARN"
+                    Write-Log "Sürüm geçmişi JSON olarak okunamadı; yeni dosya oluşturulacak." "WARN"
                 }
             }
 
@@ -277,9 +275,9 @@ function Save-VersionHistory([string]$Status, [string]$Message = "") {
             Move-Item -LiteralPath $tempFile -Destination $historyFile -Force -ErrorAction Stop
             return
         }
-        catch [System.IO.IOException] {
+        catch {
             if ($attempt -ge $maxAttempts) { throw }
-            Write-Log "Sürüm geçmişi dosyası geçici olarak kullanımda; tekrar deneniyor ($attempt/$maxAttempts)." "WARN"
+            Write-Log "Sürüm geçmişi dosyasına erişilemedi; tekrar deneniyor ($attempt/$maxAttempts)." "WARN"
             Start-Sleep -Milliseconds $delayMilliseconds
         }
         finally {
