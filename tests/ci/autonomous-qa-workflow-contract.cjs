@@ -33,4 +33,11 @@ assert.doesNotMatch(
   'autonomous workflow must never enable production cutover',
 );
 
+assert.doesNotMatch(
+  text,
+  /^      OPERIS_QA_EVIDENCE_DIR:.*runner\.temp/m,
+  'runner.temp is not valid in job-level env; set evidence path at step scope',
+);
+
+
 console.log('OPERIS_AUTONOMOUS_QA_WORKFLOW_CONTRACT_PASS');
