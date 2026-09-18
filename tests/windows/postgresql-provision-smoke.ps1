@@ -10,7 +10,36 @@ if ($provisionSource -match '\$env:OS\s+-ne\s+''Windows_NT''' -or
 Write-Output 'POSTGRESQL_WINDOWS_PLATFORM_DETECTION_PASS'
 . "$PSScriptRoot\..\..\windows\postgresql-provision.ps1"
 $root = Join-Path $env:RUNNER_TEMP 'OperisPostgreSQLProvisionTest'
-$first = Ensure-OperisPostgresql -Root $root -ServiceName OperisPostgreSQLTest16 -DatabasePort 55432
+
+$architectureEnvironmentNames = @(
+    'PROCESSOR_ARCHITEW6432',
+    'ProgramW6432',
+    'ProgramFiles(x86)',
+    'CommonProgramW6432',
+    'CommonProgramFiles(x86)'
+)
+$architectureEnvironmentBackup = @{}
+foreach ($name in $architectureEnvironmentNames) {
+    $item = Get-Item -LiteralPath ("Env:" + $name) -ErrorAction SilentlyContinue
+    $architectureEnvironmentBackup[$name] = if ($item) { [string]$item.Value } else { $null }
+}
+
+try {
+    foreach ($name in $architectureEnvironmentNames) {
+        Remove-Item -LiteralPath ("Env:" + $name) -ErrorAction SilentlyContinue
+    }
+    $first = Ensure-OperisPostgresql -Root $root -ServiceName OperisPostgreSQLTest16 -DatabasePort 55432
+}
+finally {
+    foreach ($name in $architectureEnvironmentNames) {
+        if ($null -eq $architectureEnvironmentBackup[$name]) {
+            Remove-Item -LiteralPath ("Env:" + $name) -ErrorAction SilentlyContinue
+        } else {
+            Set-Item -LiteralPath ("Env:" + $name) -Value $architectureEnvironmentBackup[$name]
+        }
+    }
+}
+
 Write-Output "::add-mask::$($first.DatabaseUrl)"
 $uri = [Uri]$first.DatabaseUrl
 $password = $uri.UserInfo.Split(':',2)[1]
