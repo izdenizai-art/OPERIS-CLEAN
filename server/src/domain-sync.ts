@@ -94,6 +94,7 @@ function ldapScript(secret:{controller:string;useLdaps:boolean;port:number;baseD
     "$path=\"${provider}://${controller}:$port/$baseDn\"",
     "$authType=[System.DirectoryServices.AuthenticationTypes]::Secure -bor [System.DirectoryServices.AuthenticationTypes]::ServerBind",
     "if($protocol -eq 'LDAPS'){ $authType = $authType -bor [System.DirectoryServices.AuthenticationTypes]::SecureSocketsLayer }",
+    "if($protocol -eq 'LDAP'){ $authType = $authType -bor [System.DirectoryServices.AuthenticationTypes]::Signing -bor [System.DirectoryServices.AuthenticationTypes]::Sealing }",
     "$root=New-Object System.DirectoryServices.DirectoryEntry($path,$username,$password,$authType)","$null=$root.NativeObject",
   ];
   if(!listUsers)return [...common,
@@ -140,6 +141,7 @@ function ldapSingleUserScript(
     "$path=\"${provider}://${controller}:$port/$baseDn\"",
     "$authType=[System.DirectoryServices.AuthenticationTypes]::Secure -bor [System.DirectoryServices.AuthenticationTypes]::ServerBind",
     "if($protocol -eq 'LDAPS'){ $authType = $authType -bor [System.DirectoryServices.AuthenticationTypes]::SecureSocketsLayer }",
+    "if($protocol -eq 'LDAP'){ $authType = $authType -bor [System.DirectoryServices.AuthenticationTypes]::Signing -bor [System.DirectoryServices.AuthenticationTypes]::Sealing }",
     "$root=New-Object System.DirectoryServices.DirectoryEntry($path,$username,$password,$authType)",
     "$null=$root.NativeObject",
     "$escapedSam=$targetSam.Replace('\\','\\5c').Replace('*','\\2a').Replace('(','\\28').Replace(')','\\29').Replace([char]0,'\\00')",
@@ -181,6 +183,7 @@ async function verifyDomainCredentials(usernameInput:string,passwordInput:string
     "$path=\"${provider}://${controller}:$port/$baseDn\"",
     "$authType=[System.DirectoryServices.AuthenticationTypes]::Secure -bor [System.DirectoryServices.AuthenticationTypes]::ServerBind",
     "if($protocol -eq 'LDAPS'){ $authType = $authType -bor [System.DirectoryServices.AuthenticationTypes]::SecureSocketsLayer }",
+    "if($protocol -eq 'LDAP'){ $authType = $authType -bor [System.DirectoryServices.AuthenticationTypes]::Signing -bor [System.DirectoryServices.AuthenticationTypes]::Sealing }",
     "$entry=New-Object System.DirectoryServices.DirectoryEntry($path,$username,$password,$authType)",
     "$null=$entry.NativeObject",
     "[pscustomobject]@{ok=$true} | ConvertTo-Json -Compress",
