@@ -88,7 +88,7 @@ async function connectionSecret(){
 function ldapScript(secret:{controller:string;useLdaps:boolean;port:number;baseDn:string;username:string;password:string},listUsers:boolean){
   const common=[
     "$ErrorActionPreference='Stop'",
-    "trap { $ex=$_.Exception; $parts=@(); $parts += ('MESSAGE=' + $ex.Message); if($null -ne $ex.HResult){$parts += ('HRESULT=0x{0:X8}' -f ([uint32]$ex.HResult))}; if($ex.PSObject.Properties.Name -contains 'ExtendedError'){$parts += ('EXTENDED_ERROR=' + $ex.ExtendedError)}; if($ex.PSObject.Properties.Name -contains 'ExtendedErrorMessage' -and $ex.ExtendedErrorMessage){$parts += ('EXTENDED_MESSAGE=' + $ex.ExtendedErrorMessage)}; [Console]::Error.WriteLine(($parts -join ' | ')); exit 1 }","Add-Type -AssemblyName System.DirectoryServices",
+    "trap { $ex=$_.Exception; $parts=@(); $parts += ('MESSAGE=' + $ex.Message); if($null -ne $ex.HResult){$parts += ('HRESULT=0x' + $ex.HResult.ToString('X8'))}; if($ex.PSObject.Properties.Name -contains 'ExtendedError'){$parts += ('EXTENDED_ERROR=' + $ex.ExtendedError)}; if($ex.PSObject.Properties.Name -contains 'ExtendedErrorMessage' -and $ex.ExtendedErrorMessage){$parts += ('EXTENDED_MESSAGE=' + $ex.ExtendedErrorMessage)}; [Console]::Error.WriteLine(($parts -join ' | ')); exit 1 }","Add-Type -AssemblyName System.DirectoryServices",
     `$controller='${psQuote(secret.controller)}'`,`$port='${secret.port}'`,`$baseDn='${psQuote(secret.baseDn)}'`,
     `$username='${psQuote(secret.username)}'`,`$password='${psQuote(secret.password)}'`,`$scheme='${secret.useLdaps?'LDAPS':'LDAP'}'`,
     "$path=\"${scheme}://${controller}:$port/$baseDn\"",
@@ -127,7 +127,7 @@ function ldapSingleUserScript(
 ){
   const lines=[
     "$ErrorActionPreference='Stop'",
-    "trap { $ex=$_.Exception; $parts=@(); $parts += ('MESSAGE=' + $ex.Message); if($null -ne $ex.HResult){$parts += ('HRESULT=0x{0:X8}' -f ([uint32]$ex.HResult))}; if($ex.PSObject.Properties.Name -contains 'ExtendedError'){$parts += ('EXTENDED_ERROR=' + $ex.ExtendedError)}; if($ex.PSObject.Properties.Name -contains 'ExtendedErrorMessage' -and $ex.ExtendedErrorMessage){$parts += ('EXTENDED_MESSAGE=' + $ex.ExtendedErrorMessage)}; [Console]::Error.WriteLine(($parts -join ' | ')); exit 1 }",
+    "trap { $ex=$_.Exception; $parts=@(); $parts += ('MESSAGE=' + $ex.Message); if($null -ne $ex.HResult){$parts += ('HRESULT=0x' + $ex.HResult.ToString('X8'))}; if($ex.PSObject.Properties.Name -contains 'ExtendedError'){$parts += ('EXTENDED_ERROR=' + $ex.ExtendedError)}; if($ex.PSObject.Properties.Name -contains 'ExtendedErrorMessage' -and $ex.ExtendedErrorMessage){$parts += ('EXTENDED_MESSAGE=' + $ex.ExtendedErrorMessage)}; [Console]::Error.WriteLine(($parts -join ' | ')); exit 1 }",
     "Add-Type -AssemblyName System.DirectoryServices",
     `$controller='${psQuote(secret.controller)}'`,
     `$port='${secret.port}'`,
