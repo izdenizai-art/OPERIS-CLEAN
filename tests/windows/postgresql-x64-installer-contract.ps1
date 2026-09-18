@@ -46,6 +46,9 @@ try {
     if ($profile.PROCESSOR_ARCHITECTURE -ne 'AMD64') {
         throw "Expected AMD64 architecture, got '$($profile.PROCESSOR_ARCHITECTURE)'."
     }
+    if ($profile.PROCESSOR_ARCHITEW6432 -ne 'AMD64') {
+        throw "Expected PROCESSOR_ARCHITEW6432=AMD64 for x64 bootstrap detection."
+    }
     if ([string]::IsNullOrWhiteSpace([string]$profile.ProgramFiles)) {
         throw 'ProgramFiles was not normalized.'
     }
