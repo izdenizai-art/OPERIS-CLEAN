@@ -1,0 +1,98 @@
+name: OPERIS Autonomous QA Agent
+
+on:
+  push:
+    branches:
+      - postgresql-candidate-validation
+  workflow_dispatch:
+    inputs:
+      run_real_windows:
+        description: Run optional self-hosted OPERIS staging observation job
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: operis-autonomous-qa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cloud-safe-agent:
+    name: Cloud-safe autonomous QA agent
+    runs-on: windows-2022
+    timeout-minutes: 60
+    env:
+      OPERIS_QA_EVIDENCE_DIR: ${{ runner.temp }}\operis-qa-agent
+      OPERIS_ALLOW_PRODUCTION_CUTOVER: 'false'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24.21.0"
+      - name: Install frontend dependencies
+        shell: pwsh
+        run: npm ci --no-audit --no-fund
+      - name: Install server dependencies
+        shell: pwsh
+        run: npm --prefix server ci --no-audit --no-fund
+      - name: Generate Prisma client
+        shell: pwsh
+        env:
+          DATABASE_URL: file:./qa-agent.db
+        run: npm --prefix server run prisma:generate
+      - name: Verify autonomous agent contracts
+        shell: pwsh
+        run: |
+          node tests/ci/operis-qa-agent-contract.cjs
+          node tests/ci/ai-handoff-failure-signature-contract.cjs
+          node tests/ci/autonomous-qa-workflow-contract.cjs
+      - name: Run autonomous QA agent
+        shell: pwsh
+        env:
+          DATABASE_URL: file:./qa-agent.db
+        run: node scripts/qa/operis-qa-agent.cjs
+      - name: Upload autonomous QA evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: operis-qa-agent-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}\operis-qa-agent
+          if-no-files-found: warn
+          retention-days: 30
+
+  real-windows-agent:
+    name: Optional self-hosted OPERIS staging agent
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_real_windows == true }}
+    runs-on: [self-hosted, windows, operis-staging]
+    timeout-minutes: 90
+    env:
+      OPERIS_QA_EVIDENCE_DIR: ${{ runner.temp }}\operis-qa-agent-real
+      OPERIS_ALLOW_PRODUCTION_CUTOVER: 'false'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24.21.0"
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          npm ci --no-audit --no-fund
+          npm --prefix server ci --no-audit --no-fund
+          $env:DATABASE_URL='file:./qa-agent.db'
+          npm --prefix server run prisma:generate
+      - name: Run autonomous QA agent on self-hosted Windows
+        shell: pwsh
+        env:
+          DATABASE_URL: file:./qa-agent.db
+        run: node scripts/qa/operis-qa-agent.cjs
+      - name: Upload self-hosted agent evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: operis-qa-agent-real-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}\operis-qa-agent-real
+          if-no-files-found: warn
+          retention-days: 30
