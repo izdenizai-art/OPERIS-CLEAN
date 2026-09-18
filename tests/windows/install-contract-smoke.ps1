@@ -149,7 +149,8 @@ try {
     Wait-Job $lockJob -Timeout 5 | Out-Null
     if ($historyFailure) { throw $historyFailure }
 
-    $historyRows = @(Get-Content $historyFile -Raw | ConvertFrom-Json)
+    $parsedHistory = Get-Content $historyFile -Raw | ConvertFrom-Json
+    $historyRows = @($parsedHistory)
     if ($historyRows.Count -ne 2) { throw "VersionHistory transient-lock retry did not preserve the existing row." }
     if ($historyRows[-1].status -ne 'SUCCESS' -or $historyRows[-1].message -ne 'lock-retry-test') {
         throw 'VersionHistory transient-lock retry did not append the new row.'
