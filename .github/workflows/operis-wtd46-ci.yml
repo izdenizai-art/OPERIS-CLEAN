@@ -6,6 +6,10 @@ on:
     branches: [ main, master, postgresql-candidate-validation ]
   pull_request:
 
+concurrency:
+  group: operis-wtd46-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   windows-build-powershell-e2e:
     name: Windows 2022 build + PowerShell + Playwright
