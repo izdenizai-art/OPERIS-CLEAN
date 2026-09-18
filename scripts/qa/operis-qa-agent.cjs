@@ -13,6 +13,11 @@ const STAGES = [
   { id: 'frontend-artifact', label: 'Compiled frontend CSS and asset contract', command: 'node tests/ci/verify-frontend-css-build.cjs' },
   { id: 'settings-static', label: 'Settings/bootstrap/static asset regression', command: 'node tests/ci/settings-and-static-asset-regression.cjs' },
   {
+    id: 'domain-sync-contracts',
+    label: 'Domain sync diagnostics, LDAP security and scheduler contracts',
+    command: 'node tests/ci/domain-sync-error-diagnostic-contract.cjs && node tests/ci/domain-sync-ldaps-provider-contract.cjs && node tests/ci/domain-sync-secure-ldap-contract.cjs && node tests/ci/domain-sync-scheduler-contract.cjs'
+  },
+  {
     id: 'windows-contracts',
     label: 'Windows installer/runtime contracts',
     platform: 'win32',
