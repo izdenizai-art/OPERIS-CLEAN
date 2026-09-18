@@ -1,6 +1,13 @@
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:OS -ne 'Windows_NT') { throw 'Disposable GitHub Windows runner required.' }
+$provisionSource = Get-Content (Join-Path $PSScriptRoot '..\..\windows\postgresql-provision.ps1') -Raw
+if ($provisionSource -match '\$env:OS\s+-ne\s+''Windows_NT''' -or
+    $provisionSource -notmatch 'OSVersion\.Platform' -or
+    $provisionSource -notmatch 'PlatformID\]::Win32NT') {
+    throw 'PostgreSQL Windows detection must use the .NET platform, not the OS environment variable.'
+}
+Write-Output 'POSTGRESQL_WINDOWS_PLATFORM_DETECTION_PASS'
 . "$PSScriptRoot\..\..\windows\postgresql-provision.ps1"
 $root = Join-Path $env:RUNNER_TEMP 'OperisPostgreSQLProvisionTest'
 $first = Ensure-OperisPostgresql -Root $root -ServiceName OperisPostgreSQLTest16 -DatabasePort 55432

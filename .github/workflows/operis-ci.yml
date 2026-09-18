@@ -47,6 +47,9 @@ jobs:
       - name: Production build
         run: npx vite build
 
+      - name: Frontend CSS ve statik asset contract
+        run: node tests/ci/verify-frontend-css-build.cjs
+
   backend:
     name: Backend + Prisma
     runs-on: ubuntu-latest

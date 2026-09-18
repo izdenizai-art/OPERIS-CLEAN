@@ -8,7 +8,7 @@ function Ensure-OperisPostgresql {
         [int]$DatabasePort = 5432
     )
     $ErrorActionPreference = 'Stop'
-    if ($env:OS -ne 'Windows_NT') { throw 'Windows required.' }
+    if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'Windows required.' }
     if ($DatabasePort -lt 1024 -or $DatabasePort -gt 65535) { throw 'Invalid database port.' }
     if ($ServiceName -notmatch '^OperisPostgreSQL[A-Za-z0-9]+$') { throw 'Invalid service identity.' }
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
