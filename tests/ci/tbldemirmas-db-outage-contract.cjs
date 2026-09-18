@@ -9,12 +9,15 @@ const tick = source.slice(tickStart, intervalStart);
 
 const queryIndex = tick.indexOf('prisma.assetExternalConnection.findMany');
 const outerTryIndex = tick.indexOf('try {');
-const schedulerCatch = /catch\\s*\\(error\\)\\s*\\{[\\s\\S]*?console\\.error\\(\\`\\[TBLDEMIRMAS SYNC\\] scheduler\\`/.test(tick);
+const catchIndex = tick.lastIndexOf('catch (error)');
+const schedulerLog =
+  tick.includes("console.error('[TBLDEMIRMAS SYNC] scheduler', error)") ||
+  tick.includes('console.error(`[TBLDEMIRMAS SYNC] scheduler`, error)');
 
 const checks = [
   ['scheduler queries connections', queryIndex >= 0],
   ['scheduler wraps database query in outer try', outerTryIndex >= 0 && outerTryIndex < queryIndex],
-  ['scheduler catches database outage', schedulerCatch],
+  ['scheduler catches database outage', catchIndex > queryIndex && schedulerLog],
 ];
 
 let failed = false;
