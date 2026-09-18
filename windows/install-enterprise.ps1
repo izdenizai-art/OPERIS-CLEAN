@@ -962,8 +962,6 @@ function Install-Shortcuts {
         $shortcutContent = @"
 [InternetShortcut]
 URL=http://$($script:SelectedIPv4):$Port
-IconFile=$InstallRoot\public\icons\operis.ico
-IconIndex=0
 "@
 
         foreach ($folder in @($commonDesktop, $commonStart)) {
