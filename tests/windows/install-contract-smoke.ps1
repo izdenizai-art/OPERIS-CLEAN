@@ -46,6 +46,7 @@ $assertions = [ordered]@{
     PrismaGenerate = ($installerText -match 'prisma:generate')
     PrismaPush = ($installerText -match 'prisma:push')
     Build = ($installerText -match '@\("run",\s*"build"\)')
+    ShortcutDoesNotReferenceMissingIcon = ($installerSource -notmatch 'IconFile=\$InstallRoot\\public\\icons\\operis\.ico')
     Health = ($installerText -match '/api/health')
     RollbackHealthVerification = (
         $installerSource -match 'function\s+Verify-RollbackHealth' -and
