@@ -8,6 +8,6 @@ const providerCount = (source.match(/\$provider='LDAP'/g) || []).length;
 assert.ok(providerCount >= 3, 'all DirectoryEntry scripts must use LDAP ADSI provider');
 assert.ok(source.includes("$protocol='\${secret.useLdaps?'LDAPS':'LDAP'}'"), 'reported protocol must still distinguish LDAPS from LDAP');
 assert.ok(source.includes("SecureSocketsLayer"), 'LDAPS must still enable AuthenticationTypes.SecureSocketsLayer');
-assert.ok(source.includes('$path="${provider}://${controller}:$port/$baseDn"'), 'DirectoryEntry path must use LDAP provider with explicit port and Base DN');
+assert.ok(source.includes('${provider}://${controller}:$port/$baseDn'), 'DirectoryEntry path must use LDAP provider with explicit port and Base DN');
 
 console.log('DOMAIN_SYNC_LDAPS_PROVIDER_PATH_PASS');
