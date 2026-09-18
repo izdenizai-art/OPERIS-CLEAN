@@ -18,6 +18,11 @@ const STAGES = [
     command: 'node tests/ci/domain-sync-error-diagnostic-contract.cjs && node tests/ci/domain-sync-ldaps-provider-contract.cjs && node tests/ci/domain-sync-secure-ldap-contract.cjs && node tests/ci/domain-sync-scheduler-contract.cjs'
   },
   {
+    id: 'startup-resilience',
+    label: 'Startup PostgreSQL readiness and background scheduler resilience',
+    command: 'node tests/ci/startup-postgresql-readiness-contract.cjs && node tests/ci/tbldemirmas-db-outage-contract.cjs'
+  },
+  {
     id: 'windows-contracts',
     label: 'Windows installer/runtime contracts',
     platform: 'win32',
