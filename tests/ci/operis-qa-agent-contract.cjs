@@ -21,6 +21,7 @@ for (const required of [
   'frontend-artifact',
   'settings-static',
   'domain-sync-contracts',
+  'startup-resilience',
   'windows-contracts',
   'security-root',
   'security-server',
