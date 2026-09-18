@@ -9,6 +9,7 @@ $fn=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDe
 if (-not $fn) { throw 'Stop-OperisRuntime missing.' }
 . ([scriptblock]::Create($fn.Extent.Text))
 $env:ProgramData = if ($env:ProgramData) { $env:ProgramData } else { 'C:\ProgramData' }
+$env:RUNNER_TEMP = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }
 $TaskName='OperisOwnershipTestTask'; $Port=33101
 $InstallRoot=Join-Path $env:ProgramData 'Operis'
 $listener=Join-Path $env:RUNNER_TEMP 'foreign-listener.cjs'
