@@ -101,9 +101,35 @@ function Invoke-AppSql([string]$Sql) {
         return (($out | Out-String).Trim())
     } finally { $env:PGPASSWORD = $old }
 }
+function Assert-FrontendArtifacts {
+    $publicDir = Join-Path $InstallRoot 'server\public'
+    $assetsDir = Join-Path $publicDir 'assets'
+    $htmlPath = Join-Path $publicDir 'index.html'
+    if (-not (Test-Path $htmlPath)) { throw 'Installed frontend index.html missing.' }
+    if (-not (Test-Path $assetsDir)) { throw 'Installed frontend assets directory missing.' }
+
+    $cssFiles = @(Get-ChildItem $assetsDir -Filter '*.css' -File -ErrorAction Stop)
+    if ($cssFiles.Count -lt 1) { throw 'Installed frontend CSS artifact missing.' }
+    $css = ($cssFiles | ForEach-Object { Get-Content $_.FullName -Raw }) -join [Environment]::NewLine
+    if ($css -match '@tailwind\s+(base|components|utilities)') { throw 'Installed frontend CSS contains raw @tailwind directives.' }
+    if ($css -match '@apply\s+') { throw 'Installed frontend CSS contains raw @apply directives.' }
+    if ($css -notmatch '\.flex\s*\{\s*display\s*:\s*flex') { throw 'Installed frontend CSS is missing compiled Tailwind flex utility.' }
+
+    $html = Get-Content $htmlPath -Raw
+    $refs = @([regex]::Matches($html, '(?:src|href)="([^"]+)"') | ForEach-Object { $_.Groups[1].Value })
+    foreach ($ref in $refs) {
+        if (-not ($ref.StartsWith('/') -or $ref.StartsWith('./'))) { continue }
+        $rel = ($ref -replace '^\./','' -replace '^/','')
+        $rel = ($rel -split '[?#]')[0]
+        if ([string]::IsNullOrWhiteSpace($rel)) { continue }
+        if (-not (Test-Path (Join-Path $publicDir $rel))) { throw "Installed frontend references missing asset: $ref" }
+    }
+}
+
 function Assert-PreservedState {
     param([string]$CredentialHash,[string]$BindingSignature,[string]$EnvMarker,[string]$BackupMarker,[string]$SentinelSql)
     Assert-Health | Out-Null
+    Assert-FrontendArtifacts
     if ((Get-FileHash (Join-Path $PgRoot 'credentials.dpapi') -Algorithm SHA256).Hash -ne $CredentialHash) { throw 'PostgreSQL credentials changed.' }
     if ((Get-BindingSignature) -ne $BindingSignature) { throw 'NetworkBinding changed unexpectedly.' }
     if (-not ((Get-Content (Join-Path $InstallRoot 'server\.env') -Raw) -match [regex]::Escape($EnvMarker))) { throw '.env preservation marker missing.' }
@@ -147,6 +173,7 @@ $result = [ordered]@{
     sourceSha = $env:GITHUB_SHA
     phase = $Phase
     cleanInstall = 'NOT_RUN'
+    frontendArtifacts = 'NOT_RUN'
     sameVersionRepair = 'NOT_RUN'
     sameVersionRefresh = 'NOT_RUN'
     setupConcurrency = 'NOT_RUN'
@@ -171,7 +198,9 @@ try {
 
     Invoke-SetupExe
     Assert-Health | Out-Null
+    Assert-FrontendArtifacts
     $result.cleanInstall = 'PASS'
+    $result.frontendArtifacts = 'PASS'
     $credentialHash = (Get-FileHash (Join-Path $PgRoot 'credentials.dpapi') -Algorithm SHA256).Hash
     $bindingSignature = Get-BindingSignature
     $envMarker = 'OPERIS_LIFECYCLE_PRESERVE=KEEP-ME'
@@ -245,6 +274,7 @@ try {
 
         Invoke-SetupExe
         Assert-Health | Out-Null
+        Assert-FrontendArtifacts
         if ((Invoke-AppSql $sentinelSelectSql) -ne '1') { throw 'Database sentinel did not survive reinstall after uninstall.' }
         $result.reinstall = 'PASS'
     }
@@ -254,7 +284,7 @@ finally {
     Get-Content $EvidencePath
 }
 
-$requiredPass = @('cleanInstall')
+$requiredPass = @('cleanInstall','frontendArtifacts')
 if ($Phase -in @('All','Maintenance')) {
     $requiredPass += @('sameVersionRepair','sameVersionRefresh','setupConcurrency','ipPreservation','configSurvival','backupSurvival','reinstall','repair','startupTask')
 }
