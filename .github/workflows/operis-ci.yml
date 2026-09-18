@@ -41,6 +41,9 @@ jobs:
       - name: Frontend bağımlılıklarını kur
         run: npm ci --no-audit --no-fund
 
+      - name: Ayarlar ve statik asset regresyon kontratı
+        run: node tests/ci/settings-and-static-asset-regression.cjs
+
       - name: TypeScript kontrolü
         run: npm run typecheck
 
