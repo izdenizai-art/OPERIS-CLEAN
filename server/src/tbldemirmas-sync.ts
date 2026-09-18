@@ -353,24 +353,30 @@ export function startTblDemirmasHourlyScheduler() {
   let lastHourKey = '';
 
   const tick = async () => {
-    const now = new Date();
-    const hourKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}-${now.getHours()}`;
+    try {
+      const now = new Date();
+      const hourKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}-${now.getHours()}`;
 
-    // Her saat başında ilk 5 dakika içinde yalnız bir kez çalışır.
-    if (now.getMinutes() > 4 || hourKey === lastHourKey) return;
-    lastHourKey = hourKey;
+      // Her saat başında ilk 5 dakika içinde yalnız bir kez çalışır.
+      // Veritabanı geçici olarak hazır değilse lastHourKey ilerletilmez;
+      // böylece ilk 5 dakika içindeki sonraki tick yeniden deneyebilir.
+      if (now.getMinutes() > 4 || hourKey === lastHourKey) return;
 
-    const connections = await prisma.assetExternalConnection.findMany({
-      where: { enabled: true, type: 'MSSQL' },
-      orderBy: { createdAt: 'asc' },
-    });
+      const connections = await prisma.assetExternalConnection.findMany({
+        where: { enabled: true, type: 'MSSQL' },
+        orderBy: { createdAt: 'asc' },
+      });
+      lastHourKey = hourKey;
 
-    for (const connection of connections) {
-      try {
-        await syncTblDemirmasConnection(connection.id);
-      } catch (error) {
-        console.error(`[TBLDEMIRMAS SYNC] ${connection.name}`, error);
+      for (const connection of connections) {
+        try {
+          await syncTblDemirmasConnection(connection.id);
+        } catch (error) {
+          console.error(`[TBLDEMIRMAS SYNC] ${connection.name}`, error);
+        }
       }
+    } catch (error) {
+      console.error('[TBLDEMIRMAS SYNC] scheduler', error);
     }
   };
 
