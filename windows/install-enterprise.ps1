@@ -484,24 +484,50 @@ function Invoke-Npm([string]$WorkingDirectory, [string[]]$Arguments) {
 }
 
 function Stop-OperisRuntime {
-    foreach ($name in @($TaskName, "YaklasanIslerServer")) {
+    $taskNames = @($TaskName, "YaklasanIslerServer")
+    $registeredTasks = @()
+
+    foreach ($name in $taskNames) {
         if (Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue) {
+            $registeredTasks += $name
             Stop-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
-            Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue
         }
     }
-    Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | ForEach-Object {
-        if ($_.OwningProcess -and $_.OwningProcess -ne $PID) {
-            $process = Get-CimInstance Win32_Process -Filter "ProcessId=$($_.OwningProcess)" -ErrorAction SilentlyContinue
+
+    $programDataRoot = if ($env:ProgramData) { $env:ProgramData } else { 'C:\ProgramData' }
+    $legacyRoot = Join-Path $programDataRoot 'YaklasanIsler'
+    $deadline = (Get-Date).AddSeconds(15)
+
+    do {
+        $listeners = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
+        if ($listeners.Count -eq 0) { break }
+
+        foreach ($listener in $listeners) {
+            if (-not $listener.OwningProcess -or $listener.OwningProcess -eq $PID) { continue }
+
+            $process = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.OwningProcess)" -ErrorAction SilentlyContinue
             $commandLine = [string]$process.CommandLine
-            $legacyRoot = Join-Path $env:ProgramData 'YaklasanIsler'
             $owned = $process -and (
                 $commandLine.IndexOf($InstallRoot,[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
                 $commandLine.IndexOf($legacyRoot,[StringComparison]::OrdinalIgnoreCase) -ge 0
             )
-            if (-not $owned) { throw "TCP $Port başka bir uygulama tarafından kullanılıyor; süreç durdurulmadı." }
-            Stop-Process -Id $_.OwningProcess -Force -ErrorAction Stop
+
+            if (-not $owned) {
+                throw "TCP $Port başka bir uygulama tarafından kullanılıyor; süreç durdurulmadı."
+            }
+
+            Stop-Process -Id $listener.OwningProcess -Force -ErrorAction SilentlyContinue
         }
+
+        Start-Sleep -Milliseconds 250
+    } while ((Get-Date) -lt $deadline)
+
+    if (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue) {
+        throw "Runtime durdurulamadı; TCP $Port dinleyicisi kapanmadı."
+    }
+
+    foreach ($name in $registeredTasks) {
+        Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue
     }
 }
 
