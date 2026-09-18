@@ -414,10 +414,31 @@ export async function syncDomainUsers():Promise<DomainSyncResult>{
 }
 let timer:NodeJS.Timeout|null=null;
 export function startDomainSyncScheduler(){
-  if(timer)return;const scheduleNext=async()=>{const row=await settingsRow();const minutes=Math.max(1,Math.min(1440,row.domainSyncIntervalMinutes||60));
-    timer=setTimeout(async()=>{try{if((await settingsRow()).domainSyncEnabled)await syncDomainUsers();}catch(error){console.error('[DOMAIN SYNC]',error);
-      try{await prisma.appSettings.update({where:{id:1},data:{domainLastSyncAt:new Date(),domainLastSyncResult:`HATA: ${error instanceof Error?error.message:String(error)}`.slice(0,1000)}});}catch{}}
-      finally{timer=null;void scheduleNext();}};const delayMs=minutes*60_000;timer=setTimeout(async()=>{try{if((await settingsRow()).domainSyncEnabled)await syncDomainUsers();}catch(error){console.error('[DOMAIN SYNC]',error);
-      try{await prisma.appSettings.update({where:{id:1},data:{domainLastSyncAt:new Date(),domainLastSyncResult:`HATA: ${error instanceof Error?error.message:String(error)}`.slice(0,1000)}});}catch{}}
-      finally{timer=null;void scheduleNext();}},delayMs);timer.unref?.();};void scheduleNext();
+  if(timer)return;
+  const scheduleNext=async()=>{
+    const row=await settingsRow();
+    const minutes=Math.max(1,Math.min(1440,row.domainSyncIntervalMinutes||60));
+    const delayMs=minutes*60_000;
+    timer=setTimeout(async()=>{
+      try{
+        if((await settingsRow()).domainSyncEnabled)await syncDomainUsers();
+      }catch(error){
+        console.error('[DOMAIN SYNC]',error);
+        try{
+          await prisma.appSettings.update({
+            where:{id:1},
+            data:{
+              domainLastSyncAt:new Date(),
+              domainLastSyncResult:`HATA: ${error instanceof Error?error.message:String(error)}`.slice(0,1000),
+            },
+          });
+        }catch{}
+      }finally{
+        timer=null;
+        void scheduleNext();
+      }
+    },delayMs);
+    timer.unref?.();
+  };
+  void scheduleNext();
 }
