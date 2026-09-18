@@ -651,7 +651,7 @@ export default function App() {
     if (!requirePermission(Boolean(currentUser?.permissions.canAccessSettings), 'Ayarlara erişim yetkiniz yok.')) return;
     try {
       const saved = await api.updateSettings(settings);
-      setState((current) => ({ ...current, settings: saved }));
+      setState((current) => ({ ...current, settings: { ...current.settings, ...saved } }));
     } catch (error) {
       alert(error instanceof Error ? error.message : 'Ayarlar kaydedilemedi.');
     }
