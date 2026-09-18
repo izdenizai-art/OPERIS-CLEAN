@@ -76,28 +76,44 @@ async function main() {
         const table = model.dbName || model.name;
         const fields = model.fields.filter(f => f.kind === 'scalar' || f.kind === 'enum');
         const columns = fields.map(f => f.dbName || f.name);
-        const sourceColumns = sqlite.prepare(`PRAGMA table_info(${quote(table)})`).all().map(c => c.name).sort();
-        if (JSON.stringify(sourceColumns) !== JSON.stringify([...columns].sort())) throw new Error('Source columns differ from the supported schema');
+        const sourceColumns = sqlite.prepare(`PRAGMA table_info(${quote(table)})`).all().map(c => c.name);
+        const sourceColumnSet = new Set(sourceColumns);
+        const extraSourceColumns = sourceColumns.filter(column => !columns.includes(column));
+        if (extraSourceColumns.length) throw new Error('Source columns differ from the supported schema');
+
+        const missingFields = fields.filter(f => !sourceColumnSet.has(f.dbName || f.name));
+        const unsafeMissingFields = missingFields.filter(f => f.isRequired && !f.hasDefaultValue);
+        if (unsafeMissingFields.length) throw new Error('Source missing required column without default');
+
+        const migratedFields = fields.filter(f => sourceColumnSet.has(f.dbName || f.name));
+        const migratedColumns = migratedFields.map(f => f.dbName || f.name);
         const primary = fields.filter(f => f.isId);
         if (!primary.length) throw new Error('Primary key required');
+        if (primary.some(f => !sourceColumnSet.has(f.dbName || f.name))) throw new Error('Source missing required column without default');
+
         const order = primary.map(f => quote(f.dbName || f.name)).join(',');
         const statement = sqlite.prepare(`SELECT * FROM ${quote(table)} ORDER BY ${order}`);
         statement.setReadBigInts(true);
         const sourceRows = statement.all();
-        const canonicalRows = sourceRows.map(row => fields.map(f => normalize(row[f.dbName || f.name], f)));
-        const values = fields.map((f, i) => `$${i + 1}${f.type === 'Json' ? '::jsonb' : f.type === 'DateTime' ? '::timestamp' : f.type === 'BigInt' ? '::bigint' : ''}`).join(',');
-        const sql = `INSERT INTO ${quote(table)} (${columns.map(quote).join(',')}) VALUES (${values})`;
+        const canonicalRows = sourceRows.map(row => migratedFields.map(f => normalize(row[f.dbName || f.name], f)));
+        const values = migratedFields.map((f, i) => `${i + 1}${f.type === 'Json' ? '::jsonb' : f.type === 'DateTime' ? '::timestamp' : f.type === 'BigInt' ? '::bigint' : ''}`).join(',');
+        const sql = `INSERT INTO ${quote(table)} (${migratedColumns.map(quote).join(',')}) VALUES (${values})`;
         for (const row of canonicalRows) {
-          const parameters = row.map((v, i) => v !== null && fields[i].type === 'Json' ? JSON.stringify(v) : v);
+          const parameters = row.map((v, i) => v !== null && migratedFields[i].type === 'Json' ? JSON.stringify(v) : v);
           await tx.$executeRawUnsafe(sql, ...parameters);
         }
         const targetRows = await tx.$queryRawUnsafe(`SELECT * FROM ${quote(table)} ORDER BY ${order}`);
-        const canonicalTarget = targetRows.map(row => fields.map(f => normalize(row[f.dbName || f.name], f)));
-        const keyIndexes = primary.map(f => fields.indexOf(f));
+        const canonicalTarget = targetRows.map(row => migratedFields.map(f => normalize(row[f.dbName || f.name], f)));
+        const keyIndexes = primary.map(f => migratedFields.indexOf(f));
         const rowKey = row => JSON.stringify(keyIndexes.map(i => row[i]));
         const digest = rows => crypto.createHash('sha256').update(JSON.stringify([...rows].sort((a,b) => rowKey(a) < rowKey(b) ? -1 : rowKey(a) > rowKey(b) ? 1 : 0))).digest('hex');
         if (digest(canonicalRows) !== digest(canonicalTarget)) throw new Error('Full row verification failed');
-        evidence.push({ table, rows: sourceRows.length, fullRowSha256: digest(canonicalRows) });
+        evidence.push({
+          table,
+          rows: sourceRows.length,
+          fullRowSha256: digest(canonicalRows),
+          backfilledColumns: missingFields.map(f => f.dbName || f.name),
+        });
       }
       if (await hashFile(file) !== beforeHash) throw new Error('Source changed during migration');
     }, { timeout: 600000, maxWait: 30000, isolationLevel: 'Serializable' });
