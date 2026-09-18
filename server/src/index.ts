@@ -911,6 +911,7 @@ app.get('/api/bootstrap', requireAuth, async (req: AuthRequest, res) => {
       branding: {
         companyName: settings.companyName,
         companyLogoDataUrl: settings.companyLogoDataUrl,
+        quickLinks: parseBrandingQuickLinks(settings.quickLinksJson),
       },
       backup: {
         networkBackupEnabled: settings.networkBackupEnabled,
