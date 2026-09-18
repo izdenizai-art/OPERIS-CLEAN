@@ -878,11 +878,18 @@ export const api = {
 };
 
 export function bootstrapToState(payload: BootstrapPayload): AppState {
+  const branding = payload.settings.branding ?? { companyName: '', companyLogoDataUrl: '', quickLinks: [] };
   return {
     tasks: payload.tasks,
     credentials: payload.credentials,
     trackingRecords: payload.trackingRecords,
-    settings: payload.settings,
+    settings: {
+      ...payload.settings,
+      branding: {
+        ...branding,
+        quickLinks: Array.isArray(branding.quickLinks) ? branding.quickLinks : [],
+      },
+    },
     passwordHash: null,
   };
 }
