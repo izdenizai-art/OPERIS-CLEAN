@@ -21,7 +21,7 @@ const STAGES = [
     id: 'windows-contracts',
     label: 'Windows installer/runtime contracts',
     platform: 'win32',
-    command: "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"& './tests/windows/install-contract-smoke.ps1'; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; $env:GITHUB_ACTIONS='true'; if (-not $env:RUNNER_TEMP) { $env:RUNNER_TEMP=$env:TEMP }; & './tests/windows/installer-runtime-ownership.ps1'; exit $LASTEXITCODE\""
+    command: "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"& './tests/windows/postgresql-x64-installer-contract.ps1'; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; & './tests/windows/install-contract-smoke.ps1'; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; $env:GITHUB_ACTIONS='true'; if (-not $env:RUNNER_TEMP) { $env:RUNNER_TEMP=$env:TEMP }; & './tests/windows/installer-runtime-ownership.ps1'; exit $LASTEXITCODE\""
   },
   { id: 'security-root', label: 'Root production dependency audit', command: 'npm audit --omit=dev --audit-level=high' },
   { id: 'security-server', label: 'Server production dependency audit', command: 'npm --prefix server audit --omit=dev --audit-level=high' },
