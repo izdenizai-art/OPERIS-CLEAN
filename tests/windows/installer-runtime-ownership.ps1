@@ -6,6 +6,9 @@ $tokens=$null; $errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile($source,[ref]$tokens,[ref]$errors)
 if ($errors.Count) { throw 'Installer parse failed.' }
 $fn=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Stop-OperisRuntime'},$true)
+$sourceText = Get-Content $source -Raw
+if ($sourceText -notmatch 'Wait-OperisPortClosed') { throw 'Stop-OperisRuntime must use bounded port-close wait.' }
+if ($sourceText -notmatch 'Runtime stop timeout') { throw 'Runtime stop timeout diagnostic missing.' }
 if (-not $fn) { throw 'Stop-OperisRuntime missing.' }
 . ([scriptblock]::Create($fn.Extent.Text))
 $env:ProgramData = if ($env:ProgramData) { $env:ProgramData } else { 'C:\ProgramData' }
