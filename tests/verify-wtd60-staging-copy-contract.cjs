@@ -7,6 +7,7 @@ const read = rel => fs.readFileSync(path.join(repo, rel), 'utf8');
 const rehearsal = read('migration/rehearse-sqlite-copy-to-postgresql.sh');
 const critical = read('migration/verify-critical-business-data.sh');
 const workflow = read('.github/workflows/operis-staging-sqlite-postgresql-rehearsal.yml');
+const windowsMigration = read('server/scripts/migrate-sqlite-windows.mjs');
 const uploadBlock = workflow.slice(workflow.indexOf('- name: Upload non-sensitive rehearsal log'));
 
 const checks = [
@@ -41,6 +42,10 @@ const checks = [
   ['Workflow refuses non-empty DB before db push', workflow.indexOf('Refuse non-empty target before schema creation') < workflow.indexOf('prisma db push')],
   ['Workflow does not upload SQLite DB', !uploadBlock.includes('OPERIS_STAGING_SQLITE_FILE') && !uploadBlock.includes('.db')],
   ['Workflow uploads only non-sensitive rehearsal log', workflow.includes('operis-staging-rehearsal-evidence') && workflow.includes('operis-staging-rehearsal.log')],
+  ['Windows migration rejects extra source columns', windowsMigration.includes("extraSourceColumns.length") && windowsMigration.includes("Source columns differ from the supported schema")],
+  ['Windows migration rejects missing required no-default columns', windowsMigration.includes("f.isRequired && !f.hasDefaultValue") && windowsMigration.includes("Source missing required column without default")],
+  ['Windows migration permits only safe legacy backfill fields', windowsMigration.includes("missingFields") && windowsMigration.includes("migratedFields") && windowsMigration.includes("backfilledColumns")],
+  ['Windows migration verifies migrated legacy columns by full-row digest', windowsMigration.includes("digest(canonicalRows)") && windowsMigration.includes("digest(canonicalTarget)")],
 ];
 
 let failed = false;
