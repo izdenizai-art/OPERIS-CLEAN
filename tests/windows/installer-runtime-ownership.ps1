@@ -14,7 +14,8 @@ if (-not $fn) { throw 'Stop-OperisRuntime missing.' }
 $env:ProgramData = if ($env:ProgramData) { $env:ProgramData } else { 'C:\ProgramData' }
 $env:RUNNER_TEMP = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }
 $TaskName='OperisOwnershipTestTask'; $Port=33101
-$InstallRoot=Join-Path $env:ProgramData 'Operis'
+$InstallRoot=Join-Path $env:RUNNER_TEMP 'OperisOwnershipTestInstallRoot'
+if ($InstallRoot.TrimEnd('\') -ieq (Join-Path $env:ProgramData 'Operis').TrimEnd('\')) { throw 'Safety guard: ownership test cannot use live OPERIS install root.' }
 $listener=Join-Path $env:RUNNER_TEMP 'foreign-listener.cjs'
 Set-Content $listener "require('net').createServer().listen($Port,'127.0.0.1')"
 $foreign=Start-Process node.exe -ArgumentList $listener -PassThru -NoNewWindow
