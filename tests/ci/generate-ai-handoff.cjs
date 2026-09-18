@@ -26,6 +26,55 @@ function command(command, args = []) {
   }
 }
 
+const FAILURE_SIGNATURES = [
+  {
+    code: 'FRONTEND_UNDEFINED_LENGTH',
+    area: 'frontend-state-contract',
+    pattern: /Cannot read properties of undefined \(reading ['\"]length['\"]\)/i,
+    nextCheck: 'Map the minified stack to source and inspect the rendered component input before adding a fallback.',
+  },
+  {
+    code: 'WINDOWS_RUNTIME_SHUTDOWN',
+    area: 'windows-runtime-shutdown',
+    pattern: /Runtime durdurulamad[ıi]|dinleyicisi kapanmad[ıi]/i,
+    nextCheck: 'Inspect listener PID ownership, scheduled-task state, and bounded port-release timing.',
+  },
+  {
+    code: 'WINDOWS_FILE_LOCK',
+    area: 'windows-file-lock',
+    pattern: /being used by another process|used by another process|cannot access the file.*another process/i,
+    nextCheck: 'Reproduce the sharing violation and add bounded retry only around the exact file operation.',
+  },
+  {
+    code: 'FRONTEND_CSS_ARTIFACT',
+    area: 'frontend-build-artifact',
+    pattern: /raw @tailwind|@tailwind\s+(base|components|utilities)|raw @apply|@apply\s+/i,
+    nextCheck: 'Verify PostCSS/Tailwind compilation and installed server/public artifacts after lifecycle operations.',
+  },
+  {
+    code: 'AUTH_LOGIN_FAILED',
+    area: 'authentication',
+    pattern: /\bLOGIN_FAILED\b/i,
+    nextCheck: 'Verify account state and password-hash update evidence before changing auth logic.',
+  },
+];
+
+function detectFailureSignatures(value) {
+  const text = String(value || '');
+  const lines = text.split(/\r?\n/);
+  const found = [];
+  for (const signature of FAILURE_SIGNATURES) {
+    const line = lines.find(item => signature.pattern.test(item));
+    if (!line) continue;
+    found.push({
+      code: signature.code,
+      area: signature.area,
+      evidence: line.trim().slice(0, 500),
+      nextCheck: signature.nextCheck,
+    });
+  }
+  return found;
+}
 const candidateFiles = fs.readdirSync(repo)
   .map(name => {
     const match = name.match(/^OPERIS_v6\.3\.63_WTD(\d+)_CANDIDATE_BASELINE\.json$/);
@@ -44,6 +93,19 @@ const runnerTemp = process.env.RUNNER_TEMP || os.tmpdir();
 const windowsStdout = readIfExists(path.join(runnerTemp, 'operis.stdout.log'));
 const windowsStderr = readIfExists(path.join(runnerTemp, 'operis.stderr.log'));
 const dockerLog = readIfExists('/tmp/operis-docker-diagnostics/container.log');
+const failedStage = process.env.OPERIS_FAILED_STAGE || '';
+const detectedSignatures = detectFailureSignatures([
+  windowsStdout,
+  windowsStderr,
+  dockerLog,
+].join('\n'));
+const signatureSection = detectedSignatures.length
+  ? detectedSignatures.map(item =>
+      '- ' + item.code + ' | area=' + item.area + '\n' +
+      '  evidence: ' + item.evidence + '\n' +
+      '  nextCheck: ' + item.nextCheck
+    ).join('\n')
+  : '- No known deterministic failure signature matched. Use the first concrete FAIL message as ground truth.';
 
 const typecheck = command(process.platform === 'win32' ? 'cmd.exe' : 'npm',
   process.platform === 'win32'
@@ -68,6 +130,12 @@ Bu dosya otomatik tanı paketidir. Bir AI agent bu raporu kullanırken yalnız m
 - Runner OS: ${process.env.RUNNER_OS || process.platform}
 - Node: ${command('node', ['--version'])}
 - npm: ${command(process.platform === 'win32' ? 'cmd.exe' : 'npm', process.platform === 'win32' ? ['/d','/s','/c','npm --version'] : ['--version'])}
+
+## Failed stage
+- ${failedStage || 'unknown'}
+
+## Detected failure signatures
+${signatureSection}
 
 ## Required diagnosis order
 1. İlk kesin FAIL mesajını belirle.
@@ -125,3 +193,5 @@ ${dockerLog}
 const output = path.join(outputDir, 'AI_HANDOFF.md');
 fs.writeFileSync(output, report, 'utf8');
 console.log(output);
+
+module.exports = { detectFailureSignatures };
