@@ -240,28 +240,54 @@ function Restore-RollbackSnapshot {
 function Save-VersionHistory([string]$Status, [string]$Message = "") {
     Ensure-Directories
     $historyFile = Join-Path $DataRoot "VersionHistory.json"
-    $history = @()
-    if (Test-Path $historyFile) {
+    $maxAttempts = 12
+    $delayMilliseconds = 250
+
+    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+        $tempFile = "$historyFile.tmp-$PID-$([guid]::NewGuid().ToString('N'))"
         try {
-            $loaded = Get-Content $historyFile -Raw | ConvertFrom-Json
-            if ($loaded) { $history = @($loaded) }
-        } catch {
-            Write-Log "Sürüm geçmişi okunamadı; yeni dosya oluşturulacak." "WARN"
+            $history = @()
+            if (Test-Path $historyFile) {
+                try {
+                    $loaded = Get-Content $historyFile -Raw -ErrorAction Stop | ConvertFrom-Json
+                    if ($loaded) { $history = @($loaded) }
+                }
+                catch [System.IO.IOException] {
+                    throw
+                }
+                catch {
+                    Write-Log "Sürüm geçmişi okunamadı; yeni dosya oluşturulacak." "WARN"
+                }
+            }
+
+            $history += [pscustomobject]@{
+                installedAt = (Get-Date).ToString("o")
+                computer = $env:COMPUTERNAME
+                user = "$env:USERDOMAIN\$env:USERNAME"
+                mode = $script:InstallMode
+                previousVersion = $script:PreviousVersion
+                newVersion = $Version
+                status = $Status
+                backupRoot = $BackupsRoot
+                message = $Message
+            }
+
+            $json = $history | ConvertTo-Json -Depth 5
+            [System.IO.File]::WriteAllText($tempFile, $json, [System.Text.UTF8Encoding]::new($true))
+            Move-Item -LiteralPath $tempFile -Destination $historyFile -Force -ErrorAction Stop
+            return
+        }
+        catch [System.IO.IOException] {
+            if ($attempt -ge $maxAttempts) { throw }
+            Write-Log "Sürüm geçmişi dosyası geçici olarak kullanımda; tekrar deneniyor ($attempt/$maxAttempts)." "WARN"
+            Start-Sleep -Milliseconds $delayMilliseconds
+        }
+        finally {
+            Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
         }
     }
 
-    $history += [pscustomobject]@{
-        installedAt = (Get-Date).ToString("o")
-        computer = $env:COMPUTERNAME
-        user = "$env:USERDOMAIN\$env:USERNAME"
-        mode = $script:InstallMode
-        previousVersion = $script:PreviousVersion
-        newVersion = $Version
-        status = $Status
-        backupRoot = $BackupsRoot
-        message = $Message
-    }
-    $history | ConvertTo-Json -Depth 5 | Set-Content $historyFile -Encoding UTF8
+    throw "Sürüm geçmişi dosyası güncellenemedi."
 }
 
 function Find-Node {
