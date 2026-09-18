@@ -1,6 +1,89 @@
 # PostgreSQL provisioning module. Dot-source, then call Ensure-OperisPostgresql.
 # Vendor command options: https://www.enterprisedb.com/docs/supported-open-source/postgresql/installing/command_line_parameters/
 . (Join-Path $PSScriptRoot 'sha256-compat.ps1')
+
+function Get-OperisPostgresqlX64InstallerEnvironment {
+    if (-not [Environment]::Is64BitOperatingSystem) {
+        throw 'OPERIS PostgreSQL requires 64-bit Windows.'
+    }
+
+    $systemRoot = [Environment]::SystemDirectory
+    if ([string]::IsNullOrWhiteSpace($systemRoot)) {
+        throw 'Windows system directory could not be resolved.'
+    }
+
+    $driveRoot = [IO.Path]::GetPathRoot($systemRoot)
+    if ([string]::IsNullOrWhiteSpace($driveRoot)) {
+        throw 'Windows system drive could not be resolved.'
+    }
+
+    $programFiles64 = Join-Path $driveRoot 'Program Files'
+    $programFilesX86 = Join-Path $driveRoot 'Program Files (x86)'
+    $common64 = Join-Path $programFiles64 'Common Files'
+    $commonX86 = Join-Path $programFilesX86 'Common Files'
+
+    if (-not (Test-Path $programFiles64)) {
+        throw "64-bit Program Files directory is missing: $programFiles64"
+    }
+    if (-not (Test-Path $programFilesX86)) {
+        throw "32-bit Program Files directory is missing on 64-bit Windows: $programFilesX86"
+    }
+
+    return [pscustomobject]@{
+        PROCESSOR_ARCHITECTURE = 'AMD64'
+        ProgramFiles = $programFiles64
+        ProgramW6432 = $programFiles64
+        'ProgramFiles(x86)' = $programFilesX86
+        CommonProgramFiles = $common64
+        CommonProgramW6432 = $common64
+        'CommonProgramFiles(x86)' = $commonX86
+    }
+}
+
+function Invoke-OperisPostgresqlX64Installer {
+    param(
+        [Parameter(Mandatory=$true)][string]$Installer,
+        [Parameter(Mandatory=$true)][string]$OptionFile
+    )
+
+    if (-not (Test-Path $Installer)) { throw "PostgreSQL installer not found: $Installer" }
+    if (-not (Test-Path $OptionFile)) { throw "PostgreSQL installer option file not found: $OptionFile" }
+
+    $profile = Get-OperisPostgresqlX64InstallerEnvironment
+    $names = @(
+        'PROCESSOR_ARCHITECTURE',
+        'ProgramFiles',
+        'ProgramW6432',
+        'ProgramFiles(x86)',
+        'CommonProgramFiles',
+        'CommonProgramW6432',
+        'CommonProgramFiles(x86)'
+    )
+    $backup = @{}
+
+    foreach ($name in $names) {
+        $item = Get-Item -LiteralPath ("Env:" + $name) -ErrorAction SilentlyContinue
+        $backup[$name] = if ($item) { [string]$item.Value } else { $null }
+    }
+
+    try {
+        foreach ($name in $names) {
+            Set-Item -LiteralPath ("Env:" + $name) -Value ([string]$profile.$name)
+        }
+
+        $process = Start-Process $Installer -ArgumentList "--optionfile `"$OptionFile`"" -Wait -PassThru
+        return [int]$process.ExitCode
+    }
+    finally {
+        foreach ($name in $names) {
+            if ($null -eq $backup[$name]) {
+                Remove-Item -LiteralPath ("Env:" + $name) -ErrorAction SilentlyContinue
+            } else {
+                Set-Item -LiteralPath ("Env:" + $name) -Value $backup[$name]
+            }
+        }
+    }
+}
 function Ensure-OperisPostgresql {
     param(
         [string]$Root = (Join-Path $env:ProgramData 'OperisPostgreSQL'),
@@ -112,8 +195,8 @@ function Ensure-OperisPostgresql {
             )
             try {
                 [IO.File]::WriteAllLines($optionFile,$options,[Text.UTF8Encoding]::new($false))
-                $process = Start-Process $installer -ArgumentList "--optionfile `"$optionFile`"" -Wait -PassThru
-                if ($process.ExitCode -ne 0) { throw "PostgreSQL installer failed: exit=$($process.ExitCode)" }
+                $installerExitCode = Invoke-OperisPostgresqlX64Installer -Installer $installer -OptionFile $optionFile
+                if ($installerExitCode -ne 0) { throw "PostgreSQL installer failed: exit=$installerExitCode" }
             } finally {
                 Remove-Item $optionFile -Force -ErrorAction SilentlyContinue
             }
