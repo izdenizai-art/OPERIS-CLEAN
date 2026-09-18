@@ -31,6 +31,11 @@ test('OPERIS first-run page and health endpoint are consistent', async ({ page, 
   await inputs.nth(4).fill(testPassword);
   await page.getByRole('button', { name: 'Yönetici Kullanıcıyı Oluştur' }).click();
 
+  const releaseClose = page.getByRole('button', { name: 'Tamam ve Kapat', exact: true });
+  if (await releaseClose.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await releaseClose.click();
+  }
+
   await expect(page.getByRole('button', { name: 'Ayarlar', exact: true })).toBeVisible({ timeout: 15000 });
   await page.getByRole('button', { name: 'Ayarlar', exact: true }).click();
   await expect(page.getByText('Şirket ve Logo')).toBeVisible();
