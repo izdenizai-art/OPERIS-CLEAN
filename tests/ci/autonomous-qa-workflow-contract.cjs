@@ -16,6 +16,8 @@ for (const required of [
   'self-hosted',
   'operis-staging',
   "OPERIS_ALLOW_PRODUCTION_CUTOVER: 'false'",
+  'node tests/ci/build-final-release-gate.cjs',
+  'FINAL_RELEASE_GATE.json',
 ]) {
   assert.ok(text.includes(required), 'workflow contract missing: ' + required);
 }
