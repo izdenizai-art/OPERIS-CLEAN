@@ -20,6 +20,7 @@ for (const required of [
   'build',
   'frontend-artifact',
   'settings-static',
+  'domain-sync-contracts',
   'windows-contracts',
   'security-root',
   'security-server',
