@@ -24,9 +24,7 @@ jobs:
     name: Cloud-safe autonomous QA agent
     runs-on: windows-2022
     timeout-minutes: 60
-    env:
-      OPERIS_QA_EVIDENCE_DIR: ${{ runner.temp }}\operis-qa-agent
-      OPERIS_ALLOW_PRODUCTION_CUTOVER: 'false'
+
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -53,10 +51,15 @@ jobs:
         shell: pwsh
         env:
           DATABASE_URL: file:./qa-agent.db
+          OPERIS_QA_EVIDENCE_DIR: ${{ runner.temp }}\operis-qa-agent
+          OPERIS_ALLOW_PRODUCTION_CUTOVER: 'false'
         run: node scripts/qa/operis-qa-agent.cjs
       - name: Build consolidated final release gate
         if: always()
         shell: pwsh
+        env:
+          OPERIS_QA_EVIDENCE_DIR: ${{ runner.temp }}\operis-qa-agent
+          OPERIS_ALLOW_PRODUCTION_CUTOVER: 'false'
         run: |
           $agentEvidence = Join-Path $env:OPERIS_QA_EVIDENCE_DIR 'operis-qa-agent.json'
           $gate = Join-Path $env:OPERIS_QA_EVIDENCE_DIR 'FINAL_RELEASE_GATE.json'
@@ -79,9 +82,7 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_real_windows == true }}
     runs-on: [self-hosted, windows, operis-staging]
     timeout-minutes: 90
-    env:
-      OPERIS_QA_EVIDENCE_DIR: ${{ runner.temp }}\operis-qa-agent-real
-      OPERIS_ALLOW_PRODUCTION_CUTOVER: 'false'
+
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -98,10 +99,15 @@ jobs:
         shell: pwsh
         env:
           DATABASE_URL: file:./qa-agent.db
+          OPERIS_QA_EVIDENCE_DIR: ${{ runner.temp }}\operis-qa-agent-real
+          OPERIS_ALLOW_PRODUCTION_CUTOVER: 'false'
         run: node scripts/qa/operis-qa-agent.cjs
       - name: Build self-hosted final release gate
         if: always()
         shell: pwsh
+        env:
+          OPERIS_QA_EVIDENCE_DIR: ${{ runner.temp }}\operis-qa-agent-real
+          OPERIS_ALLOW_PRODUCTION_CUTOVER: 'false'
         run: |
           $agentEvidence = Join-Path $env:OPERIS_QA_EVIDENCE_DIR 'operis-qa-agent.json'
           $gate = Join-Path $env:OPERIS_QA_EVIDENCE_DIR 'FINAL_RELEASE_GATE.json'
