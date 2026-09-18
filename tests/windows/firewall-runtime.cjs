@@ -30,6 +30,14 @@ async function main() {
   }});
   vm.runInContext(code, context);
   const failures = [];
+  const staleRuleName = 'Operis Enterprise TCP 3999 - ManagedAccess';
+  await new Promise((resolve, reject) => execFile(
+    'powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-Command',
+      `Get-NetFirewallRule -DisplayName '${staleRuleName}' -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue; New-NetFirewallRule -DisplayName '${staleRuleName}' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 3999 -LocalAddress 127.0.0.1 -Profile Any | Out-Null`],
+    { timeout: 90000 },
+    (error, _stdout, stderr) => error ? reject(new Error(stderr || error.message)) : resolve(),
+  ));
   try {
     for (let attempt = 1; attempt <= 2; attempt++) {
       try { await context.syncRemoteAccessFirewall('ALL_ALLOWED'); }
@@ -41,13 +49,16 @@ async function main() {
       try { await context.syncRemoteAccessFirewall('ALL_ALLOWED'); }
       catch (error) { console.error('FIREWALL_EXTENDED_DIAGNOSTIC_FAILED', error.message); }
     }
-    const query = "$r=@(Get-NetFirewallRule -DisplayName 'Operis Enterprise TCP 3001 - ManagedAccess' -ErrorAction Stop); if($r.Count -ne 1){throw 'Expected exactly one managed rule'}; $p=$r|Get-NetFirewallPortFilter; if($p.LocalPort -ne '3001'){throw 'Wrong port'}; if($r.Enabled -ne 'True' -or $r.Direction -ne 'Inbound' -or $r.Action -ne 'Allow'){throw 'Wrong rule state'}; 'FIREWALL_SINGLE_RULE_PORT_3001_PASS'";
+    const query = "$stale=@(Get-NetFirewallRule -DisplayName 'Operis Enterprise TCP 3999 - ManagedAccess' -ErrorAction SilentlyContinue); if($stale.Count -ne 0){throw 'Stale managed rule was not removed'}; $r=@(Get-NetFirewallRule -DisplayName 'Operis Enterprise TCP 3001 - ManagedAccess' -ErrorAction Stop); if($r.Count -ne 1){throw 'Expected exactly one managed rule'}; $p=$r|Get-NetFirewallPortFilter; if($p.LocalPort -ne '3001'){throw 'Wrong port'}; if($r.Enabled -ne 'True' -or $r.Direction -ne 'Inbound' -or $r.Action -ne 'Allow'){throw 'Wrong rule state'}; 'FIREWALL_STALE_RULE_CLEANUP_PASS'";
     await new Promise((resolve, reject) => execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', query], { timeout: 90000 }, (e, out, err) => {
       console.log(out); if (e) reject(new Error(err || e.message)); else resolve();
     }));
     assert.equal(failures.length, 0, failures.join('\n'));
     console.log('FIREWALL_REPEATED_APPLICATION_PASS');
   } finally {
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+      `Get-NetFirewallRule -DisplayName '${staleRuleName}' -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue`],
+      { timeout: 90000 }, () => {});
     const dir = path.join(process.env.RUNNER_TEMP, 'operis-ci-diagnostics');
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'firewall-process-evidence.json'), JSON.stringify({ sourceSha: process.env.GITHUB_SHA, records, failures }, null, 2));
