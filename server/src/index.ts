@@ -2552,6 +2552,10 @@ if (process.env.NODE_ENV === 'production') {
 
   app.use((req, res, next) => {
     if (req.method === 'GET' && !req.path.startsWith('/api/')) {
+      if (path.extname(req.path)) {
+        res.status(404).type('text/plain').send('Not found');
+        return;
+      }
       res.setHeader('Cache-Control', 'no-store, max-age=0');
       res.sendFile(path.join(publicDir, 'index.html'));
       return;
