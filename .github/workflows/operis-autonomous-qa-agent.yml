@@ -54,6 +54,15 @@ jobs:
         env:
           DATABASE_URL: file:./qa-agent.db
         run: node scripts/qa/operis-qa-agent.cjs
+      - name: Build consolidated final release gate
+        if: always()
+        shell: pwsh
+        run: |
+          $agentEvidence = Join-Path $env:OPERIS_QA_EVIDENCE_DIR 'operis-qa-agent.json'
+          $gate = Join-Path $env:OPERIS_QA_EVIDENCE_DIR 'FINAL_RELEASE_GATE.json'
+          $args = @('tests/ci/build-final-release-gate.cjs', "--output=$gate", "--source-sha=${{ github.sha }}")
+          if (Test-Path $agentEvidence) { $args += "--agent-evidence=$agentEvidence" }
+          node @args
       - name: Upload autonomous QA evidence
         if: always()
         uses: actions/upload-artifact@v7
@@ -88,6 +97,15 @@ jobs:
         env:
           DATABASE_URL: file:./qa-agent.db
         run: node scripts/qa/operis-qa-agent.cjs
+      - name: Build self-hosted final release gate
+        if: always()
+        shell: pwsh
+        run: |
+          $agentEvidence = Join-Path $env:OPERIS_QA_EVIDENCE_DIR 'operis-qa-agent.json'
+          $gate = Join-Path $env:OPERIS_QA_EVIDENCE_DIR 'FINAL_RELEASE_GATE.json'
+          $args = @('tests/ci/build-final-release-gate.cjs', "--output=$gate", "--source-sha=${{ github.sha }}")
+          if (Test-Path $agentEvidence) { $args += "--agent-evidence=$agentEvidence" }
+          node @args
       - name: Upload self-hosted agent evidence
         if: always()
         uses: actions/upload-artifact@v7
