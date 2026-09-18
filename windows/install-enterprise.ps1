@@ -483,47 +483,59 @@ function Invoke-Npm([string]$WorkingDirectory, [string[]]$Arguments) {
     }
 }
 
-function Stop-OperisRuntime {
-    $taskNames = @($TaskName, "YaklasanIslerServer")
-    $registeredTasks = @()
+function Wait-OperisPortClosed([int]$ListenPort, [int]$TimeoutSeconds = 15) {
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    do {
+        if (-not (Get-NetTCPConnection -LocalPort $ListenPort -State Listen -ErrorAction SilentlyContinue)) {
+            return $true
+        }
+        Start-Sleep -Milliseconds 250
+    } while ((Get-Date) -lt $deadline)
+    return $false
+}
 
-    foreach ($name in $taskNames) {
+function Stop-OperisRuntime {
+    $programDataRoot = if ($env:ProgramData) { $env:ProgramData } else { 'C:\ProgramData' }
+    $legacyRoot = Join-Path $programDataRoot 'YaklasanIsler'
+
+    foreach ($listener in @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)) {
+        if (-not $listener.OwningProcess -or $listener.OwningProcess -eq $PID) { continue }
+
+        $process = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.OwningProcess)" -ErrorAction SilentlyContinue
+        $commandLine = [string]$process.CommandLine
+        $owned = $process -and (
+            $commandLine.IndexOf($InstallRoot,[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+            $commandLine.IndexOf($legacyRoot,[StringComparison]::OrdinalIgnoreCase) -ge 0
+        )
+        if (-not $owned) {
+            throw "TCP $Port başka bir uygulama tarafından kullanılıyor; süreç ve görevler değiştirilmedi."
+        }
+    }
+
+    $registeredTasks = @()
+    foreach ($name in @($TaskName, "YaklasanIslerServer")) {
         if (Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue) {
             $registeredTasks += $name
             Stop-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
         }
     }
 
-    $programDataRoot = if ($env:ProgramData) { $env:ProgramData } else { 'C:\ProgramData' }
-    $legacyRoot = Join-Path $programDataRoot 'YaklasanIsler'
-    $deadline = (Get-Date).AddSeconds(15)
+    foreach ($listener in @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)) {
+        if (-not $listener.OwningProcess -or $listener.OwningProcess -eq $PID) { continue }
 
-    do {
-        $listeners = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
-        if ($listeners.Count -eq 0) { break }
-
-        foreach ($listener in $listeners) {
-            if (-not $listener.OwningProcess -or $listener.OwningProcess -eq $PID) { continue }
-
-            $process = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.OwningProcess)" -ErrorAction SilentlyContinue
-            $commandLine = [string]$process.CommandLine
-            $owned = $process -and (
-                $commandLine.IndexOf($InstallRoot,[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
-                $commandLine.IndexOf($legacyRoot,[StringComparison]::OrdinalIgnoreCase) -ge 0
-            )
-
-            if (-not $owned) {
-                throw "TCP $Port başka bir uygulama tarafından kullanılıyor; süreç durdurulmadı."
-            }
-
+        $process = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.OwningProcess)" -ErrorAction SilentlyContinue
+        $commandLine = [string]$process.CommandLine
+        $owned = $process -and (
+            $commandLine.IndexOf($InstallRoot,[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+            $commandLine.IndexOf($legacyRoot,[StringComparison]::OrdinalIgnoreCase) -ge 0
+        )
+        if ($owned) {
             Stop-Process -Id $listener.OwningProcess -Force -ErrorAction SilentlyContinue
         }
+    }
 
-        Start-Sleep -Milliseconds 250
-    } while ((Get-Date) -lt $deadline)
-
-    if (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue) {
-        throw "Runtime durdurulamadı; TCP $Port dinleyicisi kapanmadı."
+    if (-not (Wait-OperisPortClosed -ListenPort $Port -TimeoutSeconds 15)) {
+        throw "Runtime stop timeout: TCP $Port listener 15 saniye içinde kapanmadı; görev kayıtları korunuyor."
     }
 
     foreach ($name in $registeredTasks) {
