@@ -31,6 +31,7 @@ function Get-OperisPostgresqlX64InstallerEnvironment {
 
     return [pscustomobject]@{
         PROCESSOR_ARCHITECTURE = 'AMD64'
+        PROCESSOR_ARCHITEW6432 = 'AMD64'
         ProgramFiles = $programFiles64
         ProgramW6432 = $programFiles64
         'ProgramFiles(x86)' = $programFilesX86
@@ -52,6 +53,7 @@ function Invoke-OperisPostgresqlX64Installer {
     $profile = Get-OperisPostgresqlX64InstallerEnvironment
     $names = @(
         'PROCESSOR_ARCHITECTURE',
+        'PROCESSOR_ARCHITEW6432',
         'ProgramFiles',
         'ProgramW6432',
         'ProgramFiles(x86)',
