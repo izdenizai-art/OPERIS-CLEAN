@@ -23,6 +23,11 @@ const STAGES = [
     command: 'node tests/ci/startup-postgresql-readiness-contract.cjs && node tests/ci/tbldemirmas-db-outage-contract.cjs'
   },
   {
+    id: 'migration-contracts',
+    label: 'SQLite to PostgreSQL migration parameter and safety contracts',
+    command: 'node tests/ci/sqlite-migration-parameter-contract.cjs && node tests/verify-wtd60-staging-copy-contract.cjs'
+  },
+  {
     id: 'windows-contracts',
     label: 'Windows installer/runtime contracts',
     platform: 'win32',
