@@ -64,3 +64,31 @@ try {
   Stop-Process -Id $orphan.Id -Force -ErrorAction SilentlyContinue
   Remove-Item $InstallRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
+
+New-Item -ItemType Directory $InstallRoot -Force | Out-Null
+$moduleRoot=Join-Path $InstallRoot 'module-owned'
+New-Item -ItemType Directory $moduleRoot -Force | Out-Null
+$prismaEngine=Join-Path $repo 'server\node_modules\.prisma\client\query_engine-windows.dll.node'
+if (-not (Test-Path $prismaEngine)) { throw 'Generated Prisma query engine missing for native module ownership test.' }
+Copy-Item $prismaEngine (Join-Path $moduleRoot 'query_engine-windows.dll.node') -Force
+Set-Content (Join-Path $moduleRoot 'load.cjs') "require('./query_engine-windows.dll.node'); setInterval(()=>{},1000);"
+$moduleOwned=Start-Process node.exe -ArgumentList 'load.cjs' -WorkingDirectory $moduleRoot -PassThru -NoNewWindow
+try {
+  Start-Sleep -Milliseconds 750
+  if ($moduleOwned.HasExited) { throw 'Native-module-owned node ended before stop test.' }
+  $moduleOwnedCim=Get-CimInstance Win32_Process -Filter "ProcessId=$($moduleOwned.Id)" -ErrorAction Stop
+  if ([string]$moduleOwnedCim.CommandLine -match [regex]::Escape($InstallRoot)) { throw 'Native module test is invalid: command line exposes InstallRoot.' }
+  $loaded=@((Get-Process -Id $moduleOwned.Id -ErrorAction Stop).Modules | Where-Object {
+    ([string]$_.FileName).StartsWith($InstallRoot.TrimEnd('\') + '\',[StringComparison]::OrdinalIgnoreCase)
+  })
+  if ($loaded.Count -lt 1) { throw 'Native module ownership precondition not established.' }
+  Stop-OperisRuntime
+  $moduleOwned.WaitForExit(10000) | Out-Null
+  if (-not $moduleOwned.HasExited) { throw 'Owned native-module node process was not stopped.' }
+  Remove-Item (Join-Path $moduleRoot 'query_engine-windows.dll.node') -Force -ErrorAction Stop
+  Write-Host 'INSTALLER_OWNED_NATIVE_MODULE_STOP_PASS'
+} finally {
+  Stop-Process -Id $moduleOwned.Id -Force -ErrorAction SilentlyContinue
+  try { Wait-Process -Id $moduleOwned.Id -Timeout 5 -ErrorAction SilentlyContinue } catch {}
+  Remove-Item $InstallRoot -Recurse -Force -ErrorAction SilentlyContinue
+}

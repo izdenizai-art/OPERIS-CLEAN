@@ -534,6 +534,8 @@ function Stop-OperisRuntime {
         }
     }
 
+    $installPrefix = $InstallRoot.TrimEnd('\') + '\'
+    $legacyPrefix = $legacyRoot.TrimEnd('\') + '\'
     foreach ($process in @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue)) {
         if (-not $process.ProcessId -or $process.ProcessId -eq $PID) { continue }
         $commandLine = [string]$process.CommandLine
@@ -541,8 +543,26 @@ function Stop-OperisRuntime {
             $commandLine.IndexOf($InstallRoot,[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
             $commandLine.IndexOf($legacyRoot,[StringComparison]::OrdinalIgnoreCase) -ge 0
         )
-        if (-not $owned) { continue }
 
+        if (-not $owned) {
+            try {
+                $nativeProcess = Get-Process -Id $process.ProcessId -ErrorAction Stop
+                foreach ($module in @($nativeProcess.Modules)) {
+                    $modulePath = [string]$module.FileName
+                    if ($modulePath -and (
+                        $modulePath.StartsWith($installPrefix,[StringComparison]::OrdinalIgnoreCase) -or
+                        $modulePath.StartsWith($legacyPrefix,[StringComparison]::OrdinalIgnoreCase)
+                    )) {
+                        $owned = $true
+                        break
+                    }
+                }
+            } catch {
+                Write-Log "Node process module ownership inspection skipped for PID $($process.ProcessId): $($_.Exception.Message)" "WARN"
+            }
+        }
+
+        if (-not $owned) { continue }
         Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
         try { Wait-Process -Id $process.ProcessId -Timeout 5 -ErrorAction SilentlyContinue } catch {}
     }
