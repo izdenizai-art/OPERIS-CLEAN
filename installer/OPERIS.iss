@@ -23,7 +23,8 @@ RestartApplications=no
 WizardStyle=modern
 
 [Files]
-Source: "..\*"; DestDir: "{tmp}\OPERISPayload"; Flags: ignoreversion recursesubdirs createallsubdirs deleteafterinstall; Excludes: ".git\*,node_modules\*,server\node_modules\*,dist\*,server\dist\*,server\public\*"
+Source: "..\*"; DestDir: "{tmp}\OPERISPayload"; Flags: ignoreversion recursesubdirs createallsubdirs deleteafterinstall; Excludes: ".git\*,node_modules\*,server\node_modules\*,dist\*,server\dist\*,server\public\*,vendor\postgresql\*"
+Source: "..\vendor\postgresql\postgresql-16.14-2-windows-x64.exe"; DestDir: "{tmp}\OPERISPayload\vendor\postgresql"; Flags: ignoreversion deleteafterinstall
 
 [Code]
 const
