@@ -96,4 +96,25 @@ if ($sourceText -match 'Start-Process\s+\$installer\s+-ArgumentList\s+"--optionf
     throw 'Direct PostgreSQL installer Start-Process call remains.'
 }
 
+if ($sourceText -notmatch '\[string\]\$BundledInstallerPath\s*=\s*''''') {
+    throw 'Ensure-OperisPostgresql must accept BundledInstallerPath for offline clean install.'
+}
+if ($sourceText -notmatch 'Test-Path\s+\$BundledInstallerPath') {
+    throw 'Bundled PostgreSQL installer is not checked before network download.'
+}
+if ($sourceText -notmatch 'Copy-Item\s+\$BundledInstallerPath\s+\$installer') {
+    throw 'Bundled PostgreSQL installer is not copied into the managed PostgreSQL root.'
+}
+
+$releaseWorkflow = Get-Content (Join-Path $PSScriptRoot '..\..\.github\workflows\operis-release-finalization.yml') -Raw
+if ($releaseWorkflow -notmatch 'Stage bundled PostgreSQL x64 installer') {
+    throw 'Release workflow does not stage the PostgreSQL x64 installer into setup payload.'
+}
+if ($releaseWorkflow -notmatch '6D3919BC23CFB45E79C6E391DE8B689C32101F2C1B73377AA26E4CE593C0EF28') {
+    throw 'Release workflow does not pin the PostgreSQL installer SHA256.'
+}
+if ($releaseWorkflow -notmatch 'vendor\\postgresql\\postgresql-16\.14-2-windows-x64\.exe') {
+    throw 'Release workflow does not place the PostgreSQL installer in the bundled vendor path.'
+}
+
 Write-Output 'POSTGRESQL_X64_INSTALLER_ENVIRONMENT_CONTRACT_PASS'
