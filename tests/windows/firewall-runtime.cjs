@@ -29,6 +29,15 @@ async function main() {
     });
   }});
   vm.runInContext(code, context);
+
+  const originalFirewallFlag = process.env.OPERIS_ENABLE_FIREWALL_SYNC;
+  delete process.env.OPERIS_ENABLE_FIREWALL_SYNC;
+  const disabledBefore = records.length;
+  const disabledResult = await context.syncRemoteAccessFirewall('ALL_ALLOWED');
+  assert.equal(disabledResult.applied, false, 'firewall sync must be disabled by default outside the managed runtime');
+  assert.equal(records.length, disabledBefore, 'disabled firewall sync must not spawn PowerShell');
+  process.env.OPERIS_ENABLE_FIREWALL_SYNC = '1';
+
   const failures = [];
   const staleRuleName = 'Operis Enterprise TCP 3999 - ManagedAccess';
   await new Promise((resolve, reject) => execFile(
@@ -56,6 +65,8 @@ async function main() {
     assert.equal(failures.length, 0, failures.join('\n'));
     console.log('FIREWALL_REPEATED_APPLICATION_PASS');
   } finally {
+    if (originalFirewallFlag == null) delete process.env.OPERIS_ENABLE_FIREWALL_SYNC;
+    else process.env.OPERIS_ENABLE_FIREWALL_SYNC = originalFirewallFlag;
     execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
       `Get-NetFirewallRule -DisplayName '${staleRuleName}' -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue`],
       { timeout: 90000 }, () => {});
