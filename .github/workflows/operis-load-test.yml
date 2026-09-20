@@ -1,0 +1,125 @@
+name: OPERIS 100 User Load Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch_code:
+        description: "Test şube kodu"
+        required: true
+        default: "100"
+        type: string
+      mode:
+        description: "normal, helpdesk veya mixed"
+        required: true
+        default: "normal"
+        type: choice
+        options:
+          - normal
+          - helpdesk
+          - mixed
+      confirm_mixed_writes:
+        description: "mixed modu staging verisine Task yazar. Yalnız test ortamında çalıştıracağınızı onaylayın."
+        required: true
+        default: false
+        type: boolean
+      require_unique_users:
+        description: "100 gerçek online kullanıcı sertifikasyonu için 100 benzersiz kullanıcı zorunlu olsun."
+        required: true
+        default: true
+        type: boolean
+      helpdesk_scope:
+        description: "Help Desk yük kapsamı: mine standart kullanıcı, assigned cevaplayan, branch koordinatör."
+        required: true
+        default: "mine"
+        type: choice
+        options:
+          - mine
+          - assigned
+          - branch
+      environment_confirmation:
+        description: "Yalnız staging/test için EXACT: I_CONFIRM_NON_PRODUCTION"
+        required: true
+        type: string
+
+jobs:
+  k6:
+    runs-on: [self-hosted, linux, operis-staging]
+    environment: operis-staging
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Safety gate - candidate staging only
+        shell: bash
+        env:
+          OPERIS_BASE_URL: ${{ vars.OPERIS_STAGING_BASE_URL }}
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.ref }}" != "refs/heads/postgresql-candidate-validation" ]; then
+            echo "100-user sertifikasyonu yalnız postgresql-candidate-validation branch'inde çalıştırılabilir."
+            exit 1
+          fi
+
+          if [ "${{ inputs.environment_confirmation }}" != "I_CONFIRM_NON_PRODUCTION" ]; then
+            echo "100-user load test yalnız staging/test ortamında çalıştırılabilir."
+            exit 1
+          fi
+
+          if [ "${{ inputs.require_unique_users }}" != "true" ]; then
+            echo "Bu workflow 100-user sertifikasyon kapısıdır; require_unique_users=true zorunludur."
+            exit 1
+          fi
+
+          if [ -z "$OPERIS_BASE_URL" ]; then
+            echo "OPERIS_STAGING_BASE_URL operis-staging environment variable olarak tanımlı değil."
+            exit 1
+          fi
+
+          case "$OPERIS_BASE_URL" in
+            *localhost*|*127.0.0.1*|*0.0.0.0*)
+              echo "Staging certification için loopback URL kabul edilmez."
+              exit 1
+              ;;
+          esac
+
+      - name: Safety gate for mixed write load
+        if: ${{ inputs.mode == 'mixed' }}
+        shell: bash
+        run: |
+          if [ "${{ inputs.confirm_mixed_writes }}" != "true" ]; then
+            echo "mixed modu Task verisi oluşturur/günceller. Yalnız staging/test ortamında explicit onay ile çalıştırın."
+            exit 1
+          fi
+
+      - name: Verify self-hosted load runner tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v k6
+          k6 version
+          command -v curl
+          curl --version | head -1
+
+      - name: Run 100-VU load test
+        env:
+          OPERIS_BASE_URL: ${{ vars.OPERIS_STAGING_BASE_URL }}
+          OPERIS_BRANCH_CODE: ${{ inputs.branch_code }}
+          OPERIS_LOAD_MODE: ${{ inputs.mode }}
+          OPERIS_REQUIRE_UNIQUE_USERS: ${{ inputs.require_unique_users }}
+          OPERIS_HELPDESK_SCOPE: ${{ inputs.helpdesk_scope }}
+          OPERIS_EXPECTED_DATABASE_PROVIDER: postgresql
+          OPERIS_LOAD_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+          OPERIS_LOAD_USERNAME: ${{ secrets.OPERIS_LOAD_USERNAME }}
+          OPERIS_LOAD_PASSWORD: ${{ secrets.OPERIS_LOAD_PASSWORD }}
+          OPERIS_LOAD_USERS_JSON: ${{ secrets.OPERIS_LOAD_USERS_JSON }}
+        run: k6 run tests/load/operis-100-vu.js
+
+      - name: Upload non-sensitive load summary
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: operis-100-user-${{ inputs.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: operis-load-summary.json
+          if-no-files-found: warn
+          retention-days: 14
