@@ -117,4 +117,20 @@ if ($releaseWorkflow -notmatch 'vendor\\postgresql\\postgresql-16\.14-2-windows-
     throw 'Release workflow does not place the PostgreSQL installer in the bundled vendor path.'
 }
 
+$installerIntegration = Get-Content (Join-Path $PSScriptRoot '..\..\windows\installer-postgresql.ps1') -Raw
+if ($installerIntegration -notmatch "vendor\\postgresql\\postgresql-16\.14-2-windows-x64\.exe") {
+    throw 'Enterprise installer integration does not resolve the bundled PostgreSQL payload.'
+}
+if ($installerIntegration -notmatch 'Ensure-OperisPostgresql\s+-BundledInstallerPath\s+\$bundledInstaller') {
+    throw 'Enterprise installer integration does not pass the bundled PostgreSQL payload to provisioning.'
+}
+
+$iss = Get-Content (Join-Path $PSScriptRoot '..\..\installer\OPERIS.iss') -Raw
+if ($iss -notmatch 'Source:\s*"\.\.\\vendor\\postgresql\\postgresql-16\.14-2-windows-x64\.exe"') {
+    throw 'Inno Setup does not explicitly embed the PostgreSQL x64 installer.'
+}
+if ($iss -notmatch 'DestDir:\s*"\{tmp\}\\OPERISPayload\\vendor\\postgresql"') {
+    throw 'Inno Setup PostgreSQL payload destination is incorrect.'
+}
+
 Write-Output 'POSTGRESQL_X64_INSTALLER_ENVIRONMENT_CONTRACT_PASS'
