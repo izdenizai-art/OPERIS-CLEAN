@@ -67,7 +67,8 @@ function Save-OperisPreCutover {
 }
 
 function Prepare-OperisPostgresql {
-    $script:Postgres = Ensure-OperisPostgresql
+    $bundledInstaller = Join-Path $SourceRoot 'vendor\postgresql\postgresql-16.14-2-windows-x64.exe'
+    $script:Postgres = Ensure-OperisPostgresql -BundledInstallerPath $bundledInstaller
     if ($script:DatabaseState -and -not $script:DatabaseState.SQLite -and $script:DatabaseState.Url -ne $script:Postgres.DatabaseUrl) {
         throw 'Mevcut PostgreSQL hedefi yönetilen veritabanıyla eşleşmiyor; yapılandırma değiştirilmedi.'
     }
