@@ -138,7 +138,7 @@ function normalUserCycle() {
     let meBody = null;
     try { meBody = me.json(); } catch (_) {}
     const expectedUsername = String(activeCredential?.username || '').toLocaleLowerCase('tr-TR');
-    const actualUsername = String(meBody?.username || '').toLocaleLowerCase('tr-TR');
+    const actualUsername = String(meBody?.user?.username || meBody?.username || '').toLocaleLowerCase('tr-TR');
     const identityOk = Boolean(expectedUsername && actualUsername === expectedUsername);
     functionalFailures.add(!identityOk);
     if (!identityOk) fail(`VU ${__VU} kullanıcı kimliği uyuşmuyor. Beklenen=${expectedUsername} Gerçek=${actualUsername}`);
