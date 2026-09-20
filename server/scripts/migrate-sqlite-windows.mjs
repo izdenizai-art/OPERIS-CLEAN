@@ -96,7 +96,7 @@ async function main() {
         statement.setReadBigInts(true);
         const sourceRows = statement.all();
         const canonicalRows = sourceRows.map(row => migratedFields.map(f => normalize(row[f.dbName || f.name], f)));
-        const values = migratedFields.map((f, i) => `${i + 1}${f.type === 'Json' ? '::jsonb' : f.type === 'DateTime' ? '::timestamp' : f.type === 'BigInt' ? '::bigint' : ''}`).join(',');
+        const values = migratedFields.map((f, i) => `$${i + 1}${f.type === 'Json' ? '::jsonb' : f.type === 'DateTime' ? '::timestamp' : f.type === 'BigInt' ? '::bigint' : ''}`).join(',');
         const sql = `INSERT INTO ${quote(table)} (${migratedColumns.map(quote).join(',')}) VALUES (${values})`;
         for (const row of canonicalRows) {
           const parameters = row.map((v, i) => v !== null && migratedFields[i].type === 'Json' ? JSON.stringify(v) : v);
