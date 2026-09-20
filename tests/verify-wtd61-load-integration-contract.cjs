@@ -12,7 +12,7 @@ const integrationWorkflow = read('.github/workflows/operis-integration-smoke.yml
 const checks = [
   ['Load test requires at least 100 unique users', load.includes('uniqueUsernames.size < 100')],
   ['Load test maps credentials by VU', load.includes('users[(__VU - 1) % users.length]')],
-  ['Load test verifies logged-in identity', load.includes('kullanıcı kimliği uyuşmuyor')],
+  ['Load test verifies logged-in identity', load.includes('kullanıcı kimliği uyuşmuyor') && load.includes('meBody?.user?.username')],
   ['Load test verifies branch context', load.includes('şube bağlamı uyuşmuyor')],
   ['Load test verifies PostgreSQL provider', load.includes('OPERIS_EXPECTED_DATABASE_PROVIDER') && load.includes('database?.provider')],
   ['Load test verifies DB connected', load.includes('database?.connected') || load.includes('database.connected')],
