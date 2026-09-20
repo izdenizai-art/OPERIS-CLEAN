@@ -192,6 +192,10 @@ async function currentRemoteAccessMode(): Promise<RemoteAccessMode> {
 }
 
 async function syncRemoteAccessFirewall(mode: RemoteAccessMode) {
+  const firewallSyncEnabled = /^(1|true|yes)$/i.test(String(process.env.OPERIS_ENABLE_FIREWALL_SYNC ?? '').trim());
+  if (!firewallSyncEnabled) {
+    return { applied: false, reason: 'Firewall senkronizasyonu bu runtime için devre dışı.' };
+  }
   if (process.platform !== 'win32') return { applied: false, reason: 'Windows dışında firewall değişikliği uygulanmadı.' };
 
   const localAddress = bindHost && bindHost !== '0.0.0.0' && bindHost !== '::' ? bindHost : 'Any';
