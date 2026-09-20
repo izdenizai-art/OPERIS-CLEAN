@@ -113,10 +113,10 @@ if ($releaseWorkflow -notmatch 'Stage bundled PostgreSQL x64 installer') {
 if ($releaseWorkflow -notmatch '6D3919BC23CFB45E79C6E391DE8B689C32101F2C1B73377AA26E4CE593C0EF28') {
     throw 'Release workflow does not pin the PostgreSQL installer SHA256.'
 }
-if ($releaseWorkflow -notmatch "\$vendorDir\s*=\s*'\.\\vendor\\postgresql'") {
+if (-not $releaseWorkflow.Contains('$vendorDir = ''.\vendor\postgresql''')) {
     throw 'Release workflow does not stage the PostgreSQL installer under vendor\postgresql.'
 }
-if ($releaseWorkflow -notmatch "Join-Path\s+\$vendorDir\s+'postgresql-16\.14-2-windows-x64\.exe'") {
+if (-not $releaseWorkflow.Contains('$installer = Join-Path $vendorDir ''postgresql-16.14-2-windows-x64.exe''')) {
     throw 'Release workflow does not stage the pinned PostgreSQL installer filename.'
 }
 
