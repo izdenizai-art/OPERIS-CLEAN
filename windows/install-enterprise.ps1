@@ -982,6 +982,7 @@ if (-not $Ready) { Add-Content $LogFile "$(Get-Date -Format o) PostgreSQL 120 sa
 Set-Location $InstallRoot
 $env:DOTENV_CONFIG_PATH = $EnvFile
 $env:OPERIS_DATA_DIR = Join-Path $InstallRoot "Data"
+$env:OPERIS_ENABLE_FIREWALL_SYNC = "1"
 Add-Content $LogFile "$(Get-Date -Format o) Operis server starting"
 & $NodePath $ServerFile *>> $LogFile
 $exitCode = $LASTEXITCODE
