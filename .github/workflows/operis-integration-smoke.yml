@@ -1,0 +1,106 @@
+name: OPERIS Integration Smoke Validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "EXACT: I_CONFIRM_NON_PRODUCTION"
+        required: true
+        type: string
+      test_domain:
+        description: "AD/DC test"
+        required: true
+        default: false
+        type: boolean
+      test_smtp:
+        description: "SMTP test"
+        required: true
+        default: false
+        type: boolean
+      test_graph:
+        description: "Microsoft Graph mail test"
+        required: true
+        default: false
+        type: boolean
+      test_mssql:
+        description: "Demirbaş MSSQL test"
+        required: true
+        default: false
+        type: boolean
+      test_snmp:
+        description: "SNMP test"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: operis-integration-smoke
+  cancel-in-progress: false
+
+jobs:
+  integration-smoke:
+    runs-on: [self-hosted, windows, operis-staging]
+    environment: operis-staging
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Safety gate
+        shell: pwsh
+        run: |
+          if ("${{ github.ref }}" -ne "refs/heads/postgresql-candidate-validation") {
+            throw "Integration smoke yalnız postgresql-candidate-validation branch'inde çalıştırılabilir."
+          }
+          if ("${{ inputs.confirmation }}" -ne "I_CONFIRM_NON_PRODUCTION") {
+            throw "Geçersiz non-production onayı."
+          }
+          if (-not "${{ vars.OPERIS_STAGING_BASE_URL }}") {
+            throw "OPERIS_STAGING_BASE_URL tanımlı değil."
+          }
+
+          $selected = @(
+            "${{ inputs.test_domain }}",
+            "${{ inputs.test_smtp }}",
+            "${{ inputs.test_graph }}",
+            "${{ inputs.test_mssql }}",
+            "${{ inputs.test_snmp }}"
+          ) | Where-Object { $_ -eq "true" }
+
+          if ($selected.Count -lt 1) {
+            throw "Gerçek entegrasyon smoke için en az bir entegrasyon seçilmelidir."
+          }
+
+      - name: Run OPERIS integration smoke
+        shell: pwsh
+        env:
+          OPERIS_STAGING_BASE_URL: ${{ vars.OPERIS_STAGING_BASE_URL }}
+          OPERIS_STAGING_ADMIN_USERNAME: ${{ secrets.OPERIS_STAGING_ADMIN_USERNAME }}
+          OPERIS_STAGING_ADMIN_PASSWORD: ${{ secrets.OPERIS_STAGING_ADMIN_PASSWORD }}
+          OPERIS_STAGING_TEST_EMAIL: ${{ vars.OPERIS_STAGING_TEST_EMAIL }}
+          OPERIS_STAGING_ASSET_CONNECTION_ID: ${{ vars.OPERIS_STAGING_ASSET_CONNECTION_ID }}
+          OPERIS_STAGING_NETWORK_MONITOR_ID: ${{ vars.OPERIS_STAGING_NETWORK_MONITOR_ID }}
+        run: |
+          .\tests\integration\operis-integration-smoke.ps1 `
+            -BaseUrl $env:OPERIS_STAGING_BASE_URL `
+            -Username $env:OPERIS_STAGING_ADMIN_USERNAME `
+            -TestEmail $env:OPERIS_STAGING_TEST_EMAIL `
+            -AssetConnectionId $env:OPERIS_STAGING_ASSET_CONNECTION_ID `
+            -NetworkMonitorId $env:OPERIS_STAGING_NETWORK_MONITOR_ID `
+            -TestDomain "${{ inputs.test_domain }}" `
+            -TestSmtp "${{ inputs.test_smtp }}" `
+            -TestGraph "${{ inputs.test_graph }}" `
+            -TestMssql "${{ inputs.test_mssql }}" `
+            -TestSnmp "${{ inputs.test_snmp }}"
+
+      - name: Upload non-sensitive integration result
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: operis-integration-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: operis-integration-smoke-summary.json
+          if-no-files-found: warn
+          retention-days: 14
