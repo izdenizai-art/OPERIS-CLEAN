@@ -48,3 +48,19 @@ try {
   Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
   Remove-Item $InstallRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
+
+New-Item -ItemType Directory $InstallRoot -Force | Out-Null
+$orphanScript=Join-Path $InstallRoot 'ownership-orphan.cjs'
+Set-Content $orphanScript "setInterval(()=>{},1000)"
+$orphan=Start-Process node.exe -ArgumentList $orphanScript -PassThru -NoNewWindow
+try {
+  Start-Sleep -Milliseconds 500
+  if ($orphan.HasExited) { throw 'Owned orphan node ended before stop test.' }
+  Stop-OperisRuntime
+  $orphan.WaitForExit(10000) | Out-Null
+  if (-not $orphan.HasExited) { throw 'Owned non-listening node process was not stopped.' }
+  Write-Host 'INSTALLER_OWNED_ORPHAN_NODE_STOP_PASS'
+} finally {
+  Stop-Process -Id $orphan.Id -Force -ErrorAction SilentlyContinue
+  Remove-Item $InstallRoot -Recurse -Force -ErrorAction SilentlyContinue
+}

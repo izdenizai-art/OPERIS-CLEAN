@@ -534,6 +534,19 @@ function Stop-OperisRuntime {
         }
     }
 
+    foreach ($process in @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue)) {
+        if (-not $process.ProcessId -or $process.ProcessId -eq $PID) { continue }
+        $commandLine = [string]$process.CommandLine
+        $owned = $commandLine -and (
+            $commandLine.IndexOf($InstallRoot,[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+            $commandLine.IndexOf($legacyRoot,[StringComparison]::OrdinalIgnoreCase) -ge 0
+        )
+        if (-not $owned) { continue }
+
+        Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+        try { Wait-Process -Id $process.ProcessId -Timeout 5 -ErrorAction SilentlyContinue } catch {}
+    }
+
     if (-not (Wait-OperisPortClosed -ListenPort $Port -TimeoutSeconds 15)) {
         throw "Runtime stop timeout: TCP $Port listener 15 saniye içinde kapanmadı; görev kayıtları korunuyor."
     }
