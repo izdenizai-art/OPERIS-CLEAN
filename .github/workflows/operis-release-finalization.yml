@@ -49,6 +49,24 @@ jobs:
           $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
           if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
           if (-not (Test-Path $iscc)) { throw 'ISCC.exe bulunamadı.' }
+      - name: Stage bundled PostgreSQL x64 installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vendorDir = '.\vendor\postgresql'
+          $installer = Join-Path $vendorDir 'postgresql-16.14-2-windows-x64.exe'
+          $expectedHash = '6D3919BC23CFB45E79C6E391DE8B689C32101F2C1B73377AA26E4CE593C0EF28'
+          New-Item -ItemType Directory -Path $vendorDir -Force | Out-Null
+          Invoke-WebRequest 'https://get.enterprisedb.com/postgresql/postgresql-16.14-2-windows-x64.exe' -OutFile $installer -UseBasicParsing
+          $actualHash = (Get-FileHash $installer -Algorithm SHA256).Hash
+          if ($actualHash -ne $expectedHash) { throw "PostgreSQL installer SHA256 mismatch: $actualHash" }
+          $signature = Get-AuthenticodeSignature $installer
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'EnterpriseDB') {
+            throw "PostgreSQL installer publisher signature invalid: $($signature.Status) / $($signature.SignerCertificate.Subject)"
+          }
+          if ((Get-Item $installer).Length -lt 300MB) { throw 'PostgreSQL installer is unexpectedly small.' }
+          Write-Host "Bundled PostgreSQL installer verified: $actualHash"
+
       - name: Build real Windows setup EXE
         shell: pwsh
         run: |
