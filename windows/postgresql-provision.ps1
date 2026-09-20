@@ -90,7 +90,8 @@ function Ensure-OperisPostgresql {
     param(
         [string]$Root = (Join-Path $env:ProgramData 'OperisPostgreSQL'),
         [string]$ServiceName = 'OperisPostgreSQL16',
-        [int]$DatabasePort = 5432
+        [int]$DatabasePort = 5432,
+        [string]$BundledInstallerPath = ''
     )
     $ErrorActionPreference = 'Stop'
     if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'Windows required.' }
@@ -174,14 +175,25 @@ function Ensure-OperisPostgresql {
             $installer = Join-Path $Root 'postgresql-16.14-2-windows-x64.exe'
             $expectedHash = '6D3919BC23CFB45E79C6E391DE8B689C32101F2C1B73377AA26E4CE593C0EF28'
             if (-not (Test-Path $installer)) {
-                [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-                $download = Join-Path $Root ('postgresql-16.14-2-windows-x64.exe.download-' + [guid]::NewGuid().ToString('N'))
-                try {
-                    Invoke-WebRequest 'https://get.enterprisedb.com/postgresql/postgresql-16.14-2-windows-x64.exe' -OutFile $download -UseBasicParsing
-                    if ((Get-FileHash $download -Algorithm SHA256).Hash -ne $expectedHash) { throw 'PostgreSQL installer SHA256 mismatch.' }
-                    Move-Item $download $installer -Force
-                } finally {
-                    Remove-Item $download -Force -ErrorAction SilentlyContinue
+                if (-not [string]::IsNullOrWhiteSpace($BundledInstallerPath) -and (Test-Path $BundledInstallerPath)) {
+                    if ((Get-FileHash $BundledInstallerPath -Algorithm SHA256).Hash -ne $expectedHash) {
+                        throw 'Bundled PostgreSQL installer SHA256 mismatch.'
+                    }
+                    $bundledSignature = Get-AuthenticodeSignature $BundledInstallerPath
+                    if ($bundledSignature.Status -ne 'Valid' -or $bundledSignature.SignerCertificate.Subject -notmatch 'EnterpriseDB') {
+                        throw 'Bundled PostgreSQL publisher signature invalid.'
+                    }
+                    Copy-Item $BundledInstallerPath $installer -Force
+                } else {
+                    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+                    $download = Join-Path $Root ('postgresql-16.14-2-windows-x64.exe.download-' + [guid]::NewGuid().ToString('N'))
+                    try {
+                        Invoke-WebRequest 'https://get.enterprisedb.com/postgresql/postgresql-16.14-2-windows-x64.exe' -OutFile $download -UseBasicParsing
+                        if ((Get-FileHash $download -Algorithm SHA256).Hash -ne $expectedHash) { throw 'PostgreSQL installer SHA256 mismatch.' }
+                        Move-Item $download $installer -Force
+                    } finally {
+                        Remove-Item $download -Force -ErrorAction SilentlyContinue
+                    }
                 }
             }
             if ((Get-FileHash $installer -Algorithm SHA256).Hash -ne $expectedHash) { throw 'PostgreSQL installer SHA256 mismatch.' }
