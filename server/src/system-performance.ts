@@ -5,6 +5,7 @@ type CpuTimes = { idle: number; total: number };
 type RequestSample = { at: number; latencyMs: number; statusCode: number };
 
 const requestSamples: RequestSample[] = [];
+let requestSampleHead = 0;
 let previousCpuTimes = readCpuTimes();
 let previousProcessCpu = process.cpuUsage();
 let previousProcessSampleAt = process.hrtime.bigint();
@@ -31,7 +32,17 @@ function readCpuTimes(): CpuTimes {
 
 function pruneRequestSamples(now = Date.now()): void {
   const cutoff = now - 60_000;
-  while (requestSamples.length && requestSamples[0].at < cutoff) requestSamples.shift();
+  while (requestSampleHead < requestSamples.length && requestSamples[requestSampleHead].at < cutoff) {
+    requestSampleHead += 1;
+  }
+  if (requestSampleHead >= 4096 && requestSampleHead >= Math.floor(requestSamples.length / 2)) {
+    requestSamples.splice(0, requestSampleHead);
+    requestSampleHead = 0;
+  }
+}
+
+function activeRequestSamples(): RequestSample[] {
+  return requestSampleHead === 0 ? requestSamples : requestSamples.slice(requestSampleHead);
 }
 
 function percentile95(values: number[]): number {
@@ -79,10 +90,11 @@ export function buildRuntimePerformanceSnapshot() {
   const freeMemoryBytes = os.freemem();
   const usedMemoryBytes = Math.max(0, totalMemoryBytes - freeMemoryBytes);
   const memory = process.memoryUsage();
-  const recent10Seconds = requestSamples.filter(sample => sample.at >= now - 10_000);
-  const requestCount60s = requestSamples.length;
-  const httpErrors = requestSamples.filter(sample => sample.statusCode >= 400).length;
-  const serverErrors = requestSamples.filter(sample => sample.statusCode >= 500).length;
+  const samples = activeRequestSamples();
+  const recent10Seconds = samples.filter(sample => sample.at >= now - 10_000);
+  const requestCount60s = samples.length;
+  const httpErrors = samples.filter(sample => sample.statusCode >= 400).length;
+  const serverErrors = samples.filter(sample => sample.statusCode >= 500).length;
 
   return {
     sampledAt: now,
@@ -99,7 +111,7 @@ export function buildRuntimePerformanceSnapshot() {
     },
     traffic: {
       requestsPerSecond: round(recent10Seconds.length / 10), requestCount60s,
-      p95LatencyMs: round(percentile95(requestSamples.map(sample => sample.latencyMs))),
+      p95LatencyMs: round(percentile95(samples.map(sample => sample.latencyMs))),
       httpErrorRatePercent: requestCount60s ? round((httpErrors / requestCount60s) * 100) : 0,
       serverErrorRatePercent: requestCount60s ? round((serverErrors / requestCount60s) * 100) : 0,
     },
