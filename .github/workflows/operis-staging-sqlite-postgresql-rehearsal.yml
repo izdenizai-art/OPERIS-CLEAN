@@ -18,7 +18,7 @@ concurrency:
 jobs:
   staging-copy-rehearsal:
     name: Real SQLite copy -> isolated staging PostgreSQL
-    runs-on: [self-hosted, linux, operis-staging]
+    runs-on: [self-hosted, windows, operis-staging]
     environment: operis-staging
     timeout-minutes: 90
 
@@ -31,134 +31,185 @@ jobs:
 
     steps:
       - name: Safety gate
-        shell: bash
+        shell: pwsh
         run: |
-          set -euo pipefail
+          $ErrorActionPreference = 'Stop'
 
-          if [[ "${{ github.ref }}" != "refs/heads/postgresql-candidate-validation" ]]; then
-            echo "Bu rehearsal yalnız postgresql-candidate-validation branch'inde çalıştırılabilir." >&2
-            exit 1
-          fi
+          if ("${{ github.ref }}" -ne "refs/heads/postgresql-candidate-validation") {
+            throw "Bu rehearsal yalniz postgresql-candidate-validation branch'inde calistirilabilir."
+          }
 
-          if [[ "$OPERIS_REHEARSAL_CONFIRM" != "I_CONFIRM_STAGING_COPY_ONLY" ]]; then
-            echo "Geçersiz staging onayı." >&2
-            exit 1
-          fi
+          if ($env:OPERIS_REHEARSAL_CONFIRM -ne "I_CONFIRM_STAGING_COPY_ONLY") {
+            throw "Gecersiz staging onayi."
+          }
 
-          test -n "$OPERIS_SQLITE_FILE"
-          test -n "$OPERIS_POSTGRES_URL"
-          test -n "$OPERIS_EXPECTED_TARGET_DATABASE"
-          test -f "$OPERIS_SQLITE_FILE"
+          foreach ($name in @('OPERIS_SQLITE_FILE', 'OPERIS_POSTGRES_URL', 'OPERIS_EXPECTED_TARGET_DATABASE')) {
+            if (-not (Get-Item "Env:$name").Value) {
+              throw "$name tanimli degil."
+            }
+          }
 
-          source_real="$(realpath "$OPERIS_SQLITE_FILE")"
-          workspace_real="$(realpath "$GITHUB_WORKSPACE")"
+          $sourceItem = Get-Item -LiteralPath $env:OPERIS_SQLITE_FILE -ErrorAction Stop
+          if ($sourceItem.PSIsContainer) {
+            throw "SQLite kaynagi dosya olmali."
+          }
+          if (($sourceItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "GUVENLIK BLOGU: rehearsal SQLite kaynagi symbolic link/reparse point olamaz."
+          }
 
-          case "$source_real" in
-            "$workspace_real"|"$workspace_real"/*)
-              echo "GÜVENLİK BLOĞU: gerçek SQLite rehearsal kaynağı GITHUB_WORKSPACE dışında olmalıdır." >&2
-              exit 1
-              ;;
-          esac
+          $source = [IO.Path]::GetFullPath($sourceItem.FullName)
+          $workspace = [IO.Path]::GetFullPath($env:GITHUB_WORKSPACE).TrimEnd('\') + '\'
+          if ($source.StartsWith($workspace, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "GUVENLIK BLOGU: gercek SQLite rehearsal kaynagi GITHUB_WORKSPACE disinda olmalidir."
+          }
 
-          if [[ -L "$OPERIS_SQLITE_FILE" ]]; then
-            echo "GÜVENLİK BLOĞU: rehearsal SQLite kaynağı symbolic link olamaz." >&2
-            exit 1
-          fi
+          $sourceHash = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()
+          "OPERIS_SOURCE_SHA256=$sourceHash" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - uses: actions/checkout@v6
 
-      - name: Verify required self-hosted tools
-        shell: bash
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24.21.0"
+
+      - name: Locate PostgreSQL Windows client
+        shell: pwsh
         run: |
-          set -euo pipefail
-          for tool in node npm sqlite3 psql pgloader sha256sum; do
-            command -v "$tool"
-          done
-          node --version
-          npm --version
-          sqlite3 --version
-          psql --version
-          pgloader --version
+          $ErrorActionPreference = 'Stop'
+          $command = Get-Command psql.exe -ErrorAction SilentlyContinue
+          if ($command) {
+            $psql = $command.Source
+          } else {
+            $candidates = @(
+              Get-ChildItem -Path "$env:ProgramFiles\PostgreSQL\*\bin\psql.exe" -File -ErrorAction SilentlyContinue
+            ) | Sort-Object FullName -Descending
+            if ($candidates.Count -lt 1) {
+              throw "psql.exe bulunamadi. Windows PostgreSQL client/server kurulumu gerekli."
+            }
+            $psql = $candidates[0].FullName
+          }
 
-      - name: Verify source copy is readable and target database identity is exact
-        shell: bash
+          & $psql --version
+          if ($LASTEXITCODE -ne 0) {
+            throw "psql.exe calismiyor: exit=$LASTEXITCODE"
+          }
+          "OPERIS_PSQL=$psql" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Verify exact target database and refuse non-empty target
+        shell: pwsh
         run: |
-          set -euo pipefail
+          $ErrorActionPreference = 'Stop'
 
-          source_hash="$(sha256sum "$OPERIS_SQLITE_FILE" | awk '{print $1}')"
-          source_integrity="$(sqlite3 "$OPERIS_SQLITE_FILE" 'PRAGMA integrity_check;')"
-          current_database="$(psql "$OPERIS_POSTGRES_URL" -v ON_ERROR_STOP=1 -Atqc 'SELECT current_database();')"
+          $uri = [Uri]$env:DATABASE_URL
+          $userInfo = $uri.UserInfo.Split(':', 2)
+          if ($userInfo.Count -ne 2) {
+            throw "PostgreSQL URL user/password bilgisi gecersiz."
+          }
 
-          test "$source_integrity" = "ok"
-          test "$current_database" = "$OPERIS_EXPECTED_TARGET_DATABASE"
+          $env:PGHOST = $uri.Host
+          $env:PGPORT = if ($uri.Port -gt 0) { [string]$uri.Port } else { '5432' }
+          $env:PGUSER = [Uri]::UnescapeDataString($userInfo[0])
+          $env:PGPASSWORD = [Uri]::UnescapeDataString($userInfo[1])
+          $env:PGDATABASE = [Uri]::UnescapeDataString($uri.AbsolutePath.TrimStart('/'))
 
-          echo "SOURCE_SQLITE_SHA256=$source_hash"
-          echo "TARGET_DATABASE=$current_database"
+          if ($env:PGDATABASE -ne $env:OPERIS_EXPECTED_TARGET_DATABASE) {
+            throw "Target identity mismatch."
+          }
 
-      - name: Refuse non-empty target before schema creation
-        shell: bash
-        run: |
-          set -euo pipefail
-          table_count="$(psql "$OPERIS_POSTGRES_URL" -v ON_ERROR_STOP=1 -Atqc \
-            "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE';")"
-          if [[ "$table_count" != "0" ]]; then
-            echo "GÜVENLİK BLOĞU: staging target DB boş değil. table_count=$table_count" >&2
-            exit 1
-          fi
+          $currentDatabase = (& $env:OPERIS_PSQL -X -v ON_ERROR_STOP=1 -Atqc "SELECT current_database();").Trim()
+          if ($LASTEXITCODE -ne 0 -or $currentDatabase -ne $env:OPERIS_EXPECTED_TARGET_DATABASE) {
+            throw "PostgreSQL current_database() exact target dogrulamasi basarisiz."
+          }
+
+          $tableCount = (& $env:OPERIS_PSQL -X -v ON_ERROR_STOP=1 -Atqc "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE';").Trim()
+          if ($LASTEXITCODE -ne 0) {
+            throw "PostgreSQL target table count sorgusu basarisiz."
+          }
+          if ($tableCount -ne '0') {
+            throw "GUVENLIK BLOGU: staging target DB bos degil. table_count=$tableCount"
+          }
 
       - name: Install server dependencies
         working-directory: server
-        shell: bash
+        shell: pwsh
         run: npm ci --no-audit --no-fund
 
       - name: Create PostgreSQL schema only
         working-directory: server
-        shell: bash
+        shell: pwsh
         run: |
-          set -euo pipefail
+          $ErrorActionPreference = 'Stop'
           npx prisma generate --schema prisma/schema.postgresql.prisma
+          if ($LASTEXITCODE -ne 0) { throw "prisma generate failed: exit=$LASTEXITCODE" }
           npx prisma db push --schema prisma/schema.postgresql.prisma --skip-generate
+          if ($LASTEXITCODE -ne 0) { throw "prisma db push failed: exit=$LASTEXITCODE" }
 
-      - name: Rehearse real SQLite copy migration
-        shell: bash
+      - name: Run Windows-native SQLite to PostgreSQL migration
+        shell: pwsh
+        env:
+          OPERIS_CONFIRM_SQLITE_MIGRATION: "YES"
+          OPERIS_SQLITE_MIGRATION_SOURCE: ${{ vars.OPERIS_STAGING_SQLITE_FILE }}
+          OPERIS_MIGRATION_EVIDENCE: ${{ runner.temp }}\operis-staging-migration-evidence.json
+          OPERIS_REHEARSAL_LOG: ${{ runner.temp }}\operis-staging-rehearsal.log
         run: |
-          set -euo pipefail
-          bash migration/rehearse-sqlite-copy-to-postgresql.sh | tee "$RUNNER_TEMP/operis-staging-rehearsal.log"
+          $ErrorActionPreference = 'Stop'
+          & node .\server\scripts\migrate-sqlite-windows.mjs *>&1 | Tee-Object -FilePath $env:OPERIS_REHEARSAL_LOG
+          if ($LASTEXITCODE -ne 0) {
+            throw "Windows SQLite->PostgreSQL migration failed: exit=$LASTEXITCODE"
+          }
+
+          $evidence = Get-Content -LiteralPath $env:OPERIS_MIGRATION_EVIDENCE -Raw | ConvertFrom-Json
+          if ($evidence.result -ne 'PASS' -or $evidence.verification -ne 'FULL_ROWS_AND_PRIMARY_KEYS') {
+            throw "Migration evidence PASS/FULL_ROWS_AND_PRIMARY_KEYS degil."
+          }
 
       - name: Final PostgreSQL structural checks
-        shell: bash
+        shell: pwsh
         run: |
-          set -euo pipefail
+          $ErrorActionPreference = 'Stop'
 
-          tables="$(psql "$OPERIS_POSTGRES_URL" -Atqc \
-            "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE';")"
-          invalid_fks="$(psql "$OPERIS_POSTGRES_URL" -Atqc \
-            "SELECT COUNT(*) FROM pg_constraint WHERE contype='f' AND NOT convalidated;")"
-          serial_index="$(psql "$OPERIS_POSTGRES_URL" -Atqc \
-            "SELECT COUNT(*) FROM pg_indexes WHERE schemaname='public' AND indexname='Asset_active_serialNumber_unique';")"
-          barcode_index="$(psql "$OPERIS_POSTGRES_URL" -Atqc \
-            "SELECT COUNT(*) FROM pg_indexes WHERE schemaname='public' AND indexname='Asset_active_barcode_unique';")"
+          $uri = [Uri]$env:DATABASE_URL
+          $userInfo = $uri.UserInfo.Split(':', 2)
+          $env:PGHOST = $uri.Host
+          $env:PGPORT = if ($uri.Port -gt 0) { [string]$uri.Port } else { '5432' }
+          $env:PGUSER = [Uri]::UnescapeDataString($userInfo[0])
+          $env:PGPASSWORD = [Uri]::UnescapeDataString($userInfo[1])
+          $env:PGDATABASE = [Uri]::UnescapeDataString($uri.AbsolutePath.TrimStart('/'))
 
-          test "$tables" = "50"
-          test "$invalid_fks" = "0"
-          test "$serial_index" = "1"
-          test "$barcode_index" = "1"
+          $tables = (& $env:OPERIS_PSQL -X -v ON_ERROR_STOP=1 -Atqc "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE';").Trim()
+          $invalidFks = (& $env:OPERIS_PSQL -X -v ON_ERROR_STOP=1 -Atqc "SELECT COUNT(*) FROM pg_constraint WHERE contype='f' AND NOT convalidated;").Trim()
+          $serialIndex = (& $env:OPERIS_PSQL -X -v ON_ERROR_STOP=1 -Atqc "SELECT COUNT(*) FROM pg_indexes WHERE schemaname='public' AND indexname='Asset_active_serialNumber_unique';").Trim()
+          $barcodeIndex = (& $env:OPERIS_PSQL -X -v ON_ERROR_STOP=1 -Atqc "SELECT COUNT(*) FROM pg_indexes WHERE schemaname='public' AND indexname='Asset_active_barcode_unique';").Trim()
+
+          if ($tables -ne '50') { throw "Beklenen 50 tablo, bulunan $tables." }
+          if ($invalidFks -ne '0') { throw "Dogrulanmamis foreign key var: $invalidFks." }
+          if ($serialIndex -ne '1') { throw "Asset_active_serialNumber_unique index bulunamadi." }
+          if ($barcodeIndex -ne '1') { throw "Asset_active_barcode_unique index bulunamadi." }
 
       - name: Verify source SQLite remained byte-for-byte unchanged
-        shell: bash
+        shell: pwsh
+        env:
+          OPERIS_MIGRATION_EVIDENCE: ${{ runner.temp }}\operis-staging-migration-evidence.json
         run: |
-          set -euo pipefail
-          before="$(grep '^SQLITE_SOURCE_SHA256=' "$RUNNER_TEMP/operis-staging-rehearsal.log" | tail -1 | cut -d= -f2)"
-          after="$(sha256sum "$OPERIS_SQLITE_FILE" | awk '{print $1}')"
-          test -n "$before"
-          test "$before" = "$after"
-          echo "SOURCE_SQLITE_UNCHANGED_PASS"
+          $ErrorActionPreference = 'Stop'
+          $after = (Get-FileHash -LiteralPath $env:OPERIS_SQLITE_FILE -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($after -ne $env:OPERIS_SOURCE_SHA256) {
+            throw "SQLite source hash changed during rehearsal."
+          }
 
-      - name: Upload non-sensitive rehearsal log
+          $evidence = Get-Content -LiteralPath $env:OPERIS_MIGRATION_EVIDENCE -Raw | ConvertFrom-Json
+          if ($evidence.sourceSha256 -ne $after) {
+            throw "Migration evidence source hash mismatch."
+          }
+          Write-Host "SOURCE_SQLITE_UNCHANGED_PASS"
+
+      - name: Upload non-sensitive rehearsal evidence
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: operis-staging-rehearsal-evidence
-          path: ${{ runner.temp }}/operis-staging-rehearsal.log
+          name: operis-staging-rehearsal-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}\operis-staging-rehearsal.log
+            ${{ runner.temp }}\operis-staging-migration-evidence.json
           if-no-files-found: warn
           retention-days: 14

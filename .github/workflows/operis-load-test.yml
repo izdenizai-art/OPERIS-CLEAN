@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       branch_code:
-        description: "Test şube kodu"
+        description: "Test sube kodu"
         required: true
         default: "100"
         type: string
@@ -18,17 +18,17 @@ on:
           - helpdesk
           - mixed
       confirm_mixed_writes:
-        description: "mixed modu staging verisine Task yazar. Yalnız test ortamında çalıştıracağınızı onaylayın."
+        description: "mixed modu staging verisine Task yazar. Yalniz test ortaminda calistiracaginizi onaylayin."
         required: true
         default: false
         type: boolean
       require_unique_users:
-        description: "100 gerçek online kullanıcı sertifikasyonu için 100 benzersiz kullanıcı zorunlu olsun."
+        description: "100 gercek online kullanici sertifikasyonu icin 100 benzersiz kullanici zorunlu olsun."
         required: true
         default: true
         type: boolean
       helpdesk_scope:
-        description: "Help Desk yük kapsamı: mine standart kullanıcı, assigned cevaplayan, branch koordinatör."
+        description: "Help Desk yuk kapsami: mine standart kullanici, assigned cevaplayan, branch koordinator."
         required: true
         default: "mine"
         type: choice
@@ -37,71 +37,69 @@ on:
           - assigned
           - branch
       environment_confirmation:
-        description: "Yalnız staging/test için EXACT: I_CONFIRM_NON_PRODUCTION"
+        description: "Yalniz staging/test icin EXACT: I_CONFIRM_NON_PRODUCTION"
         required: true
         type: string
 
 jobs:
   k6:
-    runs-on: [self-hosted, linux, operis-staging]
+    runs-on: [self-hosted, windows, operis-staging]
     environment: operis-staging
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
 
       - name: Safety gate - candidate staging only
-        shell: bash
+        shell: pwsh
         env:
           OPERIS_BASE_URL: ${{ vars.OPERIS_STAGING_BASE_URL }}
         run: |
-          set -euo pipefail
+          $ErrorActionPreference = 'Stop'
 
-          if [ "${{ github.ref }}" != "refs/heads/postgresql-candidate-validation" ]; then
-            echo "100-user sertifikasyonu yalnız postgresql-candidate-validation branch'inde çalıştırılabilir."
-            exit 1
-          fi
+          if ("${{ github.ref }}" -ne "refs/heads/postgresql-candidate-validation") {
+            throw "100-user sertifikasyonu yalniz postgresql-candidate-validation branch'inde calistirilabilir."
+          }
 
-          if [ "${{ inputs.environment_confirmation }}" != "I_CONFIRM_NON_PRODUCTION" ]; then
-            echo "100-user load test yalnız staging/test ortamında çalıştırılabilir."
-            exit 1
-          fi
+          if ("${{ inputs.environment_confirmation }}" -ne "I_CONFIRM_NON_PRODUCTION") {
+            throw "100-user load test yalniz staging/test ortaminda calistirilabilir."
+          }
 
-          if [ "${{ inputs.require_unique_users }}" != "true" ]; then
-            echo "Bu workflow 100-user sertifikasyon kapısıdır; require_unique_users=true zorunludur."
-            exit 1
-          fi
+          if ("${{ inputs.require_unique_users }}" -ne "true") {
+            throw "Bu workflow 100-user sertifikasyon kapisidir; require_unique_users=true zorunludur."
+          }
 
-          if [ -z "$OPERIS_BASE_URL" ]; then
-            echo "OPERIS_STAGING_BASE_URL operis-staging environment variable olarak tanımlı değil."
-            exit 1
-          fi
+          if (-not $env:OPERIS_BASE_URL) {
+            throw "OPERIS_STAGING_BASE_URL operis-staging environment variable olarak tanimli degil."
+          }
 
-          case "$OPERIS_BASE_URL" in
-            *localhost*|*127.0.0.1*|*0.0.0.0*)
-              echo "Staging certification için loopback URL kabul edilmez."
-              exit 1
-              ;;
-          esac
+          $baseUri = [Uri]$env:OPERIS_BASE_URL
+          if ($baseUri.Host -in @('localhost', '127.0.0.1', '0.0.0.0', '::1')) {
+            throw "Staging certification icin loopback URL kabul edilmez."
+          }
 
       - name: Safety gate for mixed write load
         if: ${{ inputs.mode == 'mixed' }}
-        shell: bash
+        shell: pwsh
         run: |
-          if [ "${{ inputs.confirm_mixed_writes }}" != "true" ]; then
-            echo "mixed modu Task verisi oluşturur/günceller. Yalnız staging/test ortamında explicit onay ile çalıştırın."
-            exit 1
-          fi
+          if ("${{ inputs.confirm_mixed_writes }}" -ne "true") {
+            throw "mixed modu Task verisi olusturur/gunceller. Yalniz staging/test ortaminda explicit onay ile calistirin."
+          }
 
-      - name: Verify self-hosted load runner tools
-        shell: bash
+      - name: Setup k6 on Windows
+        uses: grafana/setup-k6-action@v1
+
+      - name: Verify self-hosted Windows load runner
+        shell: pwsh
         run: |
-          set -euo pipefail
-          command -v k6
-          k6 version
-          command -v curl
-          curl --version | head -1
+          $ErrorActionPreference = 'Stop'
+          $k6 = Get-Command k6 -ErrorAction Stop
+          & $k6.Source version
+          if ($LASTEXITCODE -ne 0) {
+            throw "k6 version failed: exit=$LASTEXITCODE"
+          }
 
       - name: Run 100-VU load test
+        shell: pwsh
         env:
           OPERIS_BASE_URL: ${{ vars.OPERIS_STAGING_BASE_URL }}
           OPERIS_BRANCH_CODE: ${{ inputs.branch_code }}
@@ -113,7 +111,12 @@ jobs:
           OPERIS_LOAD_USERNAME: ${{ secrets.OPERIS_LOAD_USERNAME }}
           OPERIS_LOAD_PASSWORD: ${{ secrets.OPERIS_LOAD_PASSWORD }}
           OPERIS_LOAD_USERS_JSON: ${{ secrets.OPERIS_LOAD_USERS_JSON }}
-        run: k6 run tests/load/operis-100-vu.js
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & k6 run .\tests\load\operis-100-vu.js
+          if ($LASTEXITCODE -ne 0) {
+            throw "k6 load test failed: exit=$LASTEXITCODE"
+          }
 
       - name: Upload non-sensitive load summary
         if: always()

@@ -22,7 +22,7 @@ const checks = [
   ['Load test has 100-VU plateau', load.includes("target: 100")],
   ['Load test has failure thresholds', load.includes("http_req_failed: ['rate<0.01']") && load.includes('operis_server_failures')],
   ['Load test emits non-sensitive summary', load.includes('handleSummary') && load.includes('operis-load-summary.json')],
-  ['Load workflow requires non-production confirmation', loadWorkflow.includes('I_CONFIRM_NON_PRODUCTION')],
+  ['Load workflow requires non-production confirmation', loadWorkflow.includes('I_CONFIRM_NON_PRODUCTION')],\n  ['Load workflow self-hosted Windows staging only', loadWorkflow.includes('runs-on: [self-hosted, windows, operis-staging]') && !loadWorkflow.includes('runs-on: [self-hosted, linux, operis-staging]')],\n  ['Load workflow installs k6 using official setup action', loadWorkflow.includes('grafana/setup-k6-action@v1')],
   ['Load workflow forces PostgreSQL provider', loadWorkflow.includes('OPERIS_EXPECTED_DATABASE_PROVIDER: postgresql')],
   ['Load workflow uploads summary only', loadWorkflow.includes('operis-load-summary.json')],
 
