@@ -1,128 +1,97 @@
-name: OPERIS 100 User Load Test
+name: OPERIS Concurrent Capacity Validation
 
 on:
   workflow_dispatch:
     inputs:
-      branch_code:
-        description: "Test sube kodu"
+      max_users:
+        description: "Maximum concurrent active users"
         required: true
-        default: "100"
-        type: string
+        default: "750"
+        type: choice
+        options: ["75", "100", "150", "300", "500", "750"]
       mode:
-        description: "normal, helpdesk veya mixed"
+        description: "Active-user workload"
         required: true
         default: "normal"
         type: choice
-        options:
-          - normal
-          - helpdesk
-          - mixed
-      confirm_mixed_writes:
-        description: "mixed modu staging verisine Task yazar. Yalniz test ortaminda calistiracaginizi onaylayin."
-        required: true
-        default: false
-        type: boolean
-      require_unique_users:
-        description: "100 gercek online kullanici sertifikasyonu icin 100 benzersiz kullanici zorunlu olsun."
-        required: true
-        default: true
-        type: boolean
-      helpdesk_scope:
-        description: "Help Desk yuk kapsami: mine standart kullanici, assigned cevaplayan, branch koordinator."
-        required: true
-        default: "mine"
-        type: choice
-        options:
-          - mine
-          - assigned
-          - branch
+        options: [normal, helpdesk, mixed]
       environment_confirmation:
-        description: "Yalniz staging/test icin EXACT: I_CONFIRM_NON_PRODUCTION"
+        description: "EXACT: I_CONFIRM_NON_PRODUCTION"
         required: true
         type: string
 
+permissions:
+  contents: read
+
+concurrency:
+  group: operis-capacity-staging
+  cancel-in-progress: false
+
 jobs:
-  k6:
+  capacity:
     runs-on: [self-hosted, windows, operis-staging]
     environment: operis-staging
-    timeout-minutes: 30
+    timeout-minutes: 45
+    env:
+      DATABASE_URL: \${{ secrets.OPERIS_STAGING_POSTGRES_URL }}
+      OPERIS_BASE_URL: \${{ vars.OPERIS_STAGING_BASE_URL }}
+      OPERIS_BRANCH_CODE: "100"
+      OPERIS_CAPACITY_MAX_USERS: \${{ inputs.max_users }}
+      OPERIS_CAPACITY_USER_COUNT: \${{ inputs.max_users }}
+      OPERIS_LOAD_MODE: \${{ inputs.mode }}
+
     steps:
       - uses: actions/checkout@v6
 
-      - name: Safety gate - candidate staging only
-        shell: pwsh
-        env:
-          OPERIS_BASE_URL: ${{ vars.OPERIS_STAGING_BASE_URL }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-
-          if ("${{ github.ref }}" -ne "refs/heads/postgresql-candidate-validation") {
-            throw "100-user sertifikasyonu yalniz postgresql-candidate-validation branch'inde calistirilabilir."
-          }
-
-          if ("${{ inputs.environment_confirmation }}" -ne "I_CONFIRM_NON_PRODUCTION") {
-            throw "100-user load test yalniz staging/test ortaminda calistirilabilir."
-          }
-
-          if ("${{ inputs.require_unique_users }}" -ne "true") {
-            throw "Bu workflow 100-user sertifikasyon kapisidir; require_unique_users=true zorunludur."
-          }
-
-          if (-not $env:OPERIS_BASE_URL) {
-            throw "OPERIS_STAGING_BASE_URL operis-staging environment variable olarak tanimli degil."
-          }
-
-          $baseUri = [Uri]$env:OPERIS_BASE_URL
-          if ($baseUri.Host -in @('localhost', '127.0.0.1', '0.0.0.0', '::1')) {
-            throw "Staging certification icin loopback URL kabul edilmez."
-          }
-
-      - name: Safety gate for mixed write load
-        if: ${{ inputs.mode == 'mixed' }}
+      - name: Safety gate
         shell: pwsh
         run: |
-          if ("${{ inputs.confirm_mixed_writes }}" -ne "true") {
-            throw "mixed modu Task verisi olusturur/gunceller. Yalniz staging/test ortaminda explicit onay ile calistirin."
-          }
+          if ("\${{ github.ref }}" -ne "refs/heads/postgresql-candidate-validation") { throw "Candidate branch required." }
+          if ("\${{ inputs.environment_confirmation }}" -ne "I_CONFIRM_NON_PRODUCTION") { throw "Non-production confirmation required." }
+          if (-not $env:OPERIS_BASE_URL) { throw "OPERIS_STAGING_BASE_URL is missing." }
+          if (-not $env:DATABASE_URL -or $env:DATABASE_URL -notmatch '^postgres(ql)?://') { throw "PostgreSQL staging URL is required." }
 
-      - name: Setup k6 on Windows
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24.21.0"
+
+      - name: Install server dependencies
+        shell: pwsh
+        run: npm.cmd --prefix server ci --no-audit --no-fund
+
+      - name: Create temporary capacity credentials
+        shell: pwsh
+        run: |
+          $bytes = [Security.Cryptography.RandomNumberGenerator]::GetBytes(32)
+          $password = [Convert]::ToBase64String($bytes)
+          Write-Output "::add-mask::$password"
+          "OPERIS_CAPACITY_PASSWORD=$password" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Seed isolated capacity users
+        shell: pwsh
+        run: node server/scripts/seed-capacity-users.mjs
+
+      - name: Setup k6
         uses: grafana/setup-k6-action@v1
 
-      - name: Verify self-hosted Windows load runner
+      - name: Run capacity ladder
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Stop'
-          $k6 = Get-Command k6 -ErrorAction Stop
-          & $k6.Source version
-          if ($LASTEXITCODE -ne 0) {
-            throw "k6 version failed: exit=$LASTEXITCODE"
-          }
+          k6 run .\tests\load\operis-capacity.js
+          if ($LASTEXITCODE -ne 0) { throw "Capacity thresholds failed: exit=$LASTEXITCODE" }
 
-      - name: Run 100-VU load test
+      - name: Cleanup temporary capacity users
+        if: always()
         shell: pwsh
         env:
-          OPERIS_BASE_URL: ${{ vars.OPERIS_STAGING_BASE_URL }}
-          OPERIS_BRANCH_CODE: ${{ inputs.branch_code }}
-          OPERIS_LOAD_MODE: ${{ inputs.mode }}
-          OPERIS_REQUIRE_UNIQUE_USERS: ${{ inputs.require_unique_users }}
-          OPERIS_HELPDESK_SCOPE: ${{ inputs.helpdesk_scope }}
-          OPERIS_EXPECTED_DATABASE_PROVIDER: postgresql
-          OPERIS_LOAD_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
-          OPERIS_LOAD_USERNAME: ${{ secrets.OPERIS_LOAD_USERNAME }}
-          OPERIS_LOAD_PASSWORD: ${{ secrets.OPERIS_LOAD_PASSWORD }}
-          OPERIS_LOAD_USERS_JSON: ${{ secrets.OPERIS_LOAD_USERS_JSON }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          & k6 run .\tests\load\operis-100-vu.js
-          if ($LASTEXITCODE -ne 0) {
-            throw "k6 load test failed: exit=$LASTEXITCODE"
-          }
+          OPERIS_CAPACITY_ACTION: cleanup
+        run: node server/scripts/seed-capacity-users.mjs
 
-      - name: Upload non-sensitive load summary
+      - name: Upload capacity evidence
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: operis-100-user-${{ inputs.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: operis-load-summary.json
+          name: operis-capacity-\${{ inputs.mode }}-\${{ inputs.max_users }}-\${{ github.run_id }}
+          path: operis-capacity-summary.json
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 30

@@ -22,7 +22,7 @@ for (const required of [
   'settings-static',
   'domain-sync-contracts',
   'startup-resilience',
-  'migration-contracts',
+  'database-contracts',
   'windows-contracts',
   'security-root',
   'security-server',

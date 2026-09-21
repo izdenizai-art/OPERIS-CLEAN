@@ -27,17 +27,17 @@ function Read-OperisDatabaseUrl([string]$EnvFile) {
 function Find-OperisDatabaseState {
     $found = @()
     foreach ($root in @($InstallRoot,(Join-Path $env:ProgramData 'YaklasanIsler'))) {
-        $url = Read-OperisDatabaseUrl (Join-Path $root 'server\.env')
+        $envFile = Join-Path $root 'server\.env'
+        if (-not (Test-Path $envFile)) { continue }
+        $url = Read-OperisDatabaseUrl $envFile
+        if ([string]::IsNullOrWhiteSpace($url)) { continue }
         if ($url -match '^postgres(ql)?://') {
-            $found += [pscustomobject]@{ Root=$root; Url=$url; SQLite=$null }
-        } else {
-            if ($url -and -not $url.StartsWith('file:')) { throw 'Desteklenmeyen veritabanı URL türü.' }
-            $relative = if ($url) { $url.Substring(5) } else { './yaklasan-isler.db' }
-            $file = if ([IO.Path]::IsPathRooted($relative)) { $relative } else { Join-Path (Join-Path $root 'server\prisma') $relative }
-            if (Test-Path $file) { $found += [pscustomobject]@{ Root=$root; Url=$url; SQLite=[IO.Path]::GetFullPath($file) } }
+            $found += [pscustomobject]@{ Root=$root; Url=$url }
+            continue
         }
+        Write-Log "PostgreSQL-only kurulum eski dosya tabanlı veritabanı URL'sini yok sayıyor: $root" "WARN"
     }
-    if ($found.Count -gt 1) { throw 'İki OPERIS veritabanı bulundu; otomatik hedef seçimi durduruldu.' }
+    if ($found.Count -gt 1) { throw 'İki OPERIS PostgreSQL yapılandırması bulundu; otomatik hedef seçimi durduruldu.' }
     if ($found.Count -eq 1) { return $found[0] }
     return $null
 }
@@ -47,34 +47,25 @@ function Save-OperisPreCutover {
     New-Item -ItemType Directory $script:PreCutoverRoot -Force | Out-Null
     Protect-OperisPrivatePath $script:PreCutoverRoot
     if (-not $script:DatabaseState) { return }
-    $previousUrl = $env:DATABASE_URL
-    $previousOutput = $env:OPERIS_SQLITE_BACKUP_DIR
-    try {
-        if ($script:DatabaseState.SQLite) {
-            $env:DATABASE_URL = 'file:' + $script:DatabaseState.SQLite
-            $env:OPERIS_SQLITE_BACKUP_DIR = $script:PreCutoverRoot
-            $raw = & $script:NodePath (Join-Path $SourceRoot 'server\scripts\backup-sqlite-before-postgresql.mjs')
-            if ($LASTEXITCODE -ne 0) { throw 'Tutarlı SQLite yedeği alınamadı.' }
-            $manifest = ($raw -join [Environment]::NewLine) | ConvertFrom-Json
-            if ($manifest.integrityCheck -ne 'ok' -or (Get-FileHash $manifest.backupDb -Algorithm SHA256).Hash -ne $manifest.sha256) { throw 'SQLite yedek doğrulaması başarısız.' }
-            $script:SQLiteMigrationSource = $manifest.backupDb
-        }
-        $envFile = Join-Path $script:DatabaseState.Root 'server\.env'
-        if (Test-Path $envFile) { Copy-Item $envFile (Join-Path $script:PreCutoverRoot 'server.env') }
-        $data = Join-Path $script:DatabaseState.Root 'Data'
-        if (Test-Path $data) { Copy-Item $data (Join-Path $script:PreCutoverRoot 'Data') -Recurse }
-    } finally { $env:DATABASE_URL=$previousUrl; $env:OPERIS_SQLITE_BACKUP_DIR=$previousOutput }
+
+    $envFile = Join-Path $script:DatabaseState.Root 'server\.env'
+    if (Test-Path $envFile) { Copy-Item $envFile (Join-Path $script:PreCutoverRoot 'server.env') -Force }
+    $data = Join-Path $script:DatabaseState.Root 'Data'
+    if (Test-Path $data) { Copy-Item $data (Join-Path $script:PreCutoverRoot 'Data') -Recurse -Force }
 }
 
 function Prepare-OperisPostgresql {
     $bundledInstaller = Join-Path $SourceRoot 'vendor\postgresql\postgresql-16.14-2-windows-x64.exe'
     $script:Postgres = Ensure-OperisPostgresql -BundledInstallerPath $bundledInstaller
-    if ($script:DatabaseState -and -not $script:DatabaseState.SQLite -and $script:DatabaseState.Url -ne $script:Postgres.DatabaseUrl) {
+
+    if ($script:DatabaseState -and $script:DatabaseState.Url -ne $script:Postgres.DatabaseUrl) {
         throw 'Mevcut PostgreSQL hedefi yönetilen veritabanıyla eşleşmiyor; yapılandırma değiştirilmedi.'
     }
+
     Protect-OperisPrivatePath (Join-Path $script:Postgres.Root 'credentials.dpapi')
     $env:PATH = $script:Postgres.Bin + ';' + $env:PATH
-    if ($script:DatabaseState -and -not $script:DatabaseState.SQLite) {
+
+    if ($script:DatabaseState) {
         & (Join-Path $SourceRoot 'windows\postgresql-backup.ps1') -DatabaseUrl $script:Postgres.DatabaseUrl -DestinationRoot $script:PreCutoverRoot
         $script:PreUpgradePostgresDump = (Get-ChildItem $script:PreCutoverRoot -Filter '*.dump' | Select-Object -First 1).FullName
         if (-not $script:PreUpgradePostgresDump) { throw 'PostgreSQL upgrade yedeği bulunamadı.' }
@@ -83,41 +74,44 @@ function Prepare-OperisPostgresql {
 
 function Initialize-OperisPostgresql {
     $env:DATABASE_URL = $script:Postgres.DatabaseUrl
-    if (-not $script:DatabaseState -or $script:DatabaseState.SQLite) {
-        $uri = [Uri]$script:Postgres.DatabaseUrl
+    $uri = [Uri]$script:Postgres.DatabaseUrl
+
+    if (-not $script:DatabaseState) {
         $oldPassword = $env:PGPASSWORD
         try {
             $env:PGPASSWORD = [Uri]::UnescapeDataString($uri.UserInfo.Split(':',2)[1])
             $count = & (Join-Path $script:Postgres.Bin 'psql.exe') -X -w -h $uri.Host -p $uri.Port -U operis -d operis -v ON_ERROR_STOP=1 -Atqc "SELECT count(*) FROM pg_tables WHERE schemaname='public';"
-            if ($LASTEXITCODE -ne 0 -or [int]$count -ne 0) { throw 'Hedef PostgreSQL boş değil; schema ve veri değiştirilmedi.' }
-        } finally { $env:PGPASSWORD=$oldPassword }
+            if ($LASTEXITCODE -ne 0 -or [int]$count -ne 0) {
+                throw 'Hedef PostgreSQL boş değil; temiz kurulum mevcut veriyi değiştirmedi.'
+            }
+        } finally {
+            $env:PGPASSWORD = $oldPassword
+        }
     }
-    Copy-Item (Join-Path $InstallRoot 'server\prisma\schema.postgresql.prisma') (Join-Path $InstallRoot 'server\prisma\schema.prisma') -Force
+
     Invoke-Npm (Join-Path $InstallRoot 'server') @('run','prisma:generate')
     Invoke-Npm (Join-Path $InstallRoot 'server') @('run','prisma:push')
+
     $psql = Join-Path $script:Postgres.Bin 'psql.exe'
-    $uri = [Uri]$script:Postgres.DatabaseUrl
-    if ($script:SQLiteMigrationSource) {
-        $env:OPERIS_CONFIRM_SQLITE_MIGRATION='YES'
-        $env:OPERIS_SQLITE_MIGRATION_SOURCE=$script:SQLiteMigrationSource
-        $env:OPERIS_EXPECTED_TARGET_DATABASE=$uri.AbsolutePath.TrimStart('/')
-        $env:OPERIS_MIGRATION_EVIDENCE=Join-Path $script:PreCutoverRoot 'migration-verification.json'
-        & $script:NodePath (Join-Path $InstallRoot 'server\scripts\migrate-sqlite-windows.mjs')
-        if ($LASTEXITCODE -ne 0) { throw 'SQLite migration doğrulanamadı; provider değiştirilmedi.' }
-    }
     $oldPassword = $env:PGPASSWORD
     try {
         $env:PGPASSWORD = [Uri]::UnescapeDataString($uri.UserInfo.Split(':',2)[1])
         & $psql -X -w -h $uri.Host -p $uri.Port -U operis -d operis -v ON_ERROR_STOP=1 -f (Join-Path $InstallRoot 'migration\postgresql-custom.sql') | Out-Null
         if ($LASTEXITCODE -ne 0) { throw 'PostgreSQL özel indeksleri hazırlanamadı.' }
-    } finally { $env:PGPASSWORD = $oldPassword }
-    # Switch only after migration and full-row verification. Keep the original env in PreCutover.
+    } finally {
+        $env:PGPASSWORD = $oldPassword
+    }
+
     $target = Join-Path $InstallRoot 'server\.env'
     $text = Get-Content $target -Raw
     $line = 'DATABASE_URL="' + $script:Postgres.DatabaseUrl + '"'
-    $text = [regex]::Replace($text,'(?m)^DATABASE_URL\s*=.*$', [System.Text.RegularExpressions.MatchEvaluator]{ param($match) $line })
-    if ($text -notmatch '(?m)^DATABASE_URL=') { $text += "`r`n$line" }
-    [IO.File]::WriteAllText($target,$text,[Text.UTF8Encoding]::new($false))
+    if ($text -match '(?m)^DATABASE_URL\s*=') {
+        $text = [regex]::Replace($text,'(?m)^DATABASE_URL\s*=.*$', [System.Text.RegularExpressions.MatchEvaluator]{ param($match) $line })
+    } else {
+        $text += [Environment]::NewLine + $line
+    }
+    [IO.File]::WriteAllText($target,$text.Trim()+[Environment]::NewLine,[Text.UTF8Encoding]::new($false))
     Protect-OperisPrivatePath $target
     Set-Content (Join-Path $InstallRoot 'Data\postgresql-bin.txt') $script:Postgres.Bin
 }
+

@@ -1,164 +1,39 @@
 name: OPERIS Windows PostgreSQL Rehearsal Safety
 
 on:
-  workflow_dispatch:
   push:
     branches:
       - postgresql-candidate-validation
     paths:
-      - "tests/windows/**"
-      - ".github/workflows/operis-wtd46-ci.yml"
-      - ".github/workflows/operis-postgresql-backup-restore.yml"
-      - ".github/workflows/operis-release-finalization.yml"
-      - "server/package.json"
-      - "server/package-lock.json"
-      - "installer/OPERIS.iss"
       - "windows/**"
-      - "server/scripts/backup-sqlite-before-postgresql.mjs"
-      - "server/prisma/**"
+      - "server/prisma/schema.prisma"
+      - "server/prisma/schema.postgresql.prisma"
+      - "tests/windows/**"
       - ".github/workflows/operis-windows-postgresql-rehearsal.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  windows-precutover-backup:
-    name: Windows pre-cutover backup + verification
+  windows-postgresql-rehearsal:
+    name: Windows PostgreSQL provision + backup/restore rehearsal
     runs-on: windows-2022
-    timeout-minutes: 30
-
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
-
       - uses: actions/setup-node@v6
         with:
           node-version: "24.21.0"
-      - name: Parse all OPERIS PowerShell migration scripts
-        shell: pwsh
-        run: |
-          $errorsFound = @()
-          Get-ChildItem windows -Filter *.ps1 -File | ForEach-Object {
-            $tokens = $null
-            $errors = $null
-            [System.Management.Automation.Language.Parser]::ParseFile(
-              $_.FullName,
-              [ref]$tokens,
-              [ref]$errors
-            ) | Out-Null
 
-            if ($errors.Count -gt 0) {
-              $errorsFound += $errors | ForEach-Object {
-                "$($_.Extent.File):$($_.Extent.StartLineNumber): $($_.Message)"
-              }
-            }
-          }
-
-          if ($errorsFound.Count -gt 0) {
-            $errorsFound | ForEach-Object { Write-Error $_ }
-            exit 1
-          }
-
-      - name: Install server dependencies
-        working-directory: server
-        shell: pwsh
-        run: npm.cmd ci --no-audit --no-fund
-
-      - name: Create synthetic SQLite rollback source
-        working-directory: server
+      - name: PostgreSQL provisioning safety
         shell: pwsh
         env:
-          DATABASE_URL: file:./yaklasan-isler.db
-        run: |
-          Remove-Item prisma\yaklasan-isler.db -Force -ErrorAction SilentlyContinue
-          npx.cmd prisma generate --schema prisma/schema.sqlite.prisma
-          npx.cmd prisma db push --schema prisma/schema.sqlite.prisma --skip-generate
-          if (-not (Test-Path prisma\yaklasan-isler.db)) {
-            throw "Synthetic SQLite DB oluşturulamadı."
-          }
+          GITHUB_ACTIONS: "true"
+        run: .\tests\windows\postgresql-provision-smoke.ps1
 
-      - name: Run full pre-PostgreSQL backup on Windows
+      - name: Windows installer PostgreSQL integration
         shell: pwsh
-        run: |
-          $dest = Join-Path $env:RUNNER_TEMP "operis-prepg-backups"
-          .\windows\pre-postgresql-full-backup.ps1 `
-            -InstallRoot $env:GITHUB_WORKSPACE `
-            -DestinationRoot $dest
-
-          $zip = Get-ChildItem $dest -Filter "pre-postgresql-*.zip" -File |
-            Sort-Object LastWriteTime -Descending |
-            Select-Object -First 1
-
-          if (-not $zip) {
-            throw "Pre-PostgreSQL backup ZIP bulunamadı."
-          }
-
-          "OPERIS_PREPG_ZIP=$($zip.FullName)" |
-            Out-File -FilePath $env:GITHUB_ENV -Append
-
-      - name: Verify full pre-PostgreSQL backup
-        shell: pwsh
-        run: |
-          .\windows\verify-pre-postgresql-full-backup.ps1 `
-            -BackupZip $env:OPERIS_PREPG_ZIP
-
-      - name: Prove backup does not contain raw server.env
-        shell: pwsh
-        run: |
-          $temp = Join-Path $env:RUNNER_TEMP "operis-prepg-inspect"
-          Remove-Item $temp -Recurse -Force -ErrorAction SilentlyContinue
-          Expand-Archive $env:OPERIS_PREPG_ZIP $temp -Force
-
-          if (Test-Path (Join-Path $temp "server.env")) {
-            throw "Güvenlik hatası: raw server.env backup ZIP içinde."
-          }
-
-          if (-not (Test-Path (Join-Path $temp "yaklasan-isler.db"))) {
-            throw "Rollback DB backup ZIP içinde yok."
-          }
-
-          if (-not (Test-Path (Join-Path $temp "schema.sqlite.prisma"))) {
-            throw "SQLite schema backup ZIP içinde yok."
-          }
-
-      - name: Prove Windows SQLite rollback from verified backup
-        shell: pwsh
-        run: |
-          $inspect = Join-Path $env:RUNNER_TEMP "operis-prepg-inspect"
-          if (Test-Path $inspect) {
-            Remove-Item $inspect -Recurse -Force
-          }
-          Expand-Archive $env:OPERIS_PREPG_ZIP $inspect -Force
-
-          $backupDb = Join-Path $inspect "yaklasan-isler.db"
-          $targetDb = Join-Path $env:GITHUB_WORKSPACE "server\prisma\yaklasan-isler.db"
-
-          if (-not (Test-Path $backupDb)) {
-            throw "Rollback test backup DB bulunamadı."
-          }
-
-          $expectedHash = (Get-FileHash $backupDb -Algorithm SHA256).Hash
-          Set-Content -Path $targetDb -Value "INTENTIONALLY_CORRUPTED_FOR_ROLLBACK_TEST" -Encoding ASCII
-          $corruptedHash = (Get-FileHash $targetDb -Algorithm SHA256).Hash
-
-          if ($corruptedHash -eq $expectedHash) {
-            throw "Rollback provası için hedef DB değiştirilemedi."
-          }
-
-          .\windows\rollback-postgresql-to-sqlite.ps1 `
-            -InstallRoot $env:GITHUB_WORKSPACE `
-            -BackupDb $backupDb `
-            -ConfirmRestore YES
-
-          $restoredHash = (Get-FileHash $targetDb -Algorithm SHA256).Hash
-          if ($restoredHash -ne $expectedHash) {
-            throw "Windows rollback sonrası SQLite SHA256 eşleşmedi."
-          }
-
-          Write-Host "WINDOWS_SQLITE_ROLLBACK_REHEARSAL_PASS" -ForegroundColor Green
-
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: operis-windows-prepostgresql-backup-evidence
-          path: ${{ env.OPERIS_PREPG_ZIP }}
-          if-no-files-found: warn
+        env:
+          GITHUB_ACTIONS: "true"
+        run: .\tests\windows\enterprise-postgresql-integration.ps1 -Scenario clean

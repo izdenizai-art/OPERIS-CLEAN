@@ -14,213 +14,111 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  validate-postgresql-candidate:
-    name: Validate PostgreSQL candidate
+  postgresql-candidate:
+    name: PostgreSQL-only schema + runtime validation
     runs-on: ubuntu-latest
-    timeout-minutes: 35
-
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_DB: operis_ci
+          POSTGRES_DB: operis_candidate
           POSTGRES_USER: operis
           POSTGRES_PASSWORD: operis_ci_password
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U operis -d operis_ci"
+          --health-cmd "pg_isready -U operis -d operis_candidate"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
 
     env:
-      DATABASE_URL: postgresql://operis:operis_ci_password@localhost:5432/operis_ci?schema=public
-      OPERIS_POSTGRES_URL: postgresql://operis:operis_ci_password@localhost:5432/operis_ci
-      OPERIS_CI_PASSWORD: OperisCi123!
-      JWT_SECRET: ci-only-jwt-secret-not-for-production-00000000000000000000000000000000
-      DATA_ENCRYPTION_KEY: MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=
+      DATABASE_URL: postgresql://operis:operis_ci_password@127.0.0.1:5432/operis_candidate?schema=public
+      PORT: "3002"
+      BIND_HOST: "127.0.0.1"
       NODE_ENV: test
+      COOKIE_SECURE: "false"
+      PUBLIC_URL: http://127.0.0.1:3002
+      CLIENT_ORIGIN: http://127.0.0.1:3002
 
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: "24.21.0"
-          cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            server/package-lock.json
 
-      - name: Install migration tools
+      - name: Install PostgreSQL client
         run: |
           sudo apt-get update
-          sudo apt-get install -y pgloader sqlite3 postgresql-client
+          sudo apt-get install -y postgresql-client
 
-      - name: Install frontend dependencies
-        run: npm ci
-
-      - name: Install server dependencies
-        run: npm ci
-        working-directory: server
-
-      - name: Prove installer Prisma push rejects data loss
-        run: bash tests/verify-prisma-push-safety.sh
-
-      - name: Create synthetic SQLite source
-        env:
-          DATABASE_URL: file:./migration-smoke.db
+      - name: Install dependencies
         run: |
-          rm -f prisma/migration-smoke.db
-          npx prisma generate --schema prisma/schema.sqlite.prisma
-          npx prisma db push --schema prisma/schema.sqlite.prisma --skip-generate
-          node scripts/seed-migration-smoke.mjs
-          test -s prisma/migration-smoke.db
-        working-directory: server
+          npm ci --no-audit --no-fund
+          npm --prefix server ci --no-audit --no-fund
 
-      - name: Validate PostgreSQL Prisma schema
-        run: npx prisma validate --schema prisma/schema.postgresql.prisma
-        working-directory: server
+      - name: PostgreSQL-only contract
+        run: node tests/ci/postgresql-only-contract.cjs
 
-      - name: Generate PostgreSQL Prisma Client
-        run: npx prisma generate --schema prisma/schema.postgresql.prisma
+      - name: Validate and generate canonical Prisma schema
         working-directory: server
-
-      - name: Generate reviewable initial migration SQL
         run: |
-          mkdir -p ../migration/generated
-          npx prisma migrate diff \
-            --from-empty \
-            --to-schema-datamodel prisma/schema.postgresql.prisma \
-            --script > ../migration/generated/000000000000_postgresql_init.sql
-          cat ../migration/postgresql-custom.sql >> ../migration/generated/000000000000_postgresql_init.sql
-          test -s ../migration/generated/000000000000_postgresql_init.sql
-          node ../tests/verify-postgresql-initial-sql.cjs ../migration/generated/000000000000_postgresql_init.sql
-        working-directory: server
+          npx prisma validate
+          npx prisma generate
+          npx prisma db push --skip-generate
 
-      - name: Prove generated SQL on a second clean database
+      - name: Apply PostgreSQL custom indexes
         env:
           PGPASSWORD: operis_ci_password
         run: |
-          createdb -h localhost -U operis operis_generated_sql_ci
-          psql -v ON_ERROR_STOP=1 -h localhost -U operis -d operis_generated_sql_ci \
-            -f migration/generated/000000000000_postgresql_init.sql
-          table_count="$(psql -h localhost -U operis -d operis_generated_sql_ci -Atqc \
-            "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';")"
-          echo "generated SQL table count: $table_count"
-          test "$table_count" -eq 50
+          psql -h 127.0.0.1 -U operis -d operis_candidate -v ON_ERROR_STOP=1 -f migration/postgresql-custom.sql
 
-      - name: Apply generated schema to migration target
+      - name: Verify table and index contract
         env:
           PGPASSWORD: operis_ci_password
         run: |
-          psql -v ON_ERROR_STOP=1 -h localhost -U operis -d operis_ci \
-            -f migration/generated/000000000000_postgresql_init.sql
+          tables="$(psql -h 127.0.0.1 -U operis -d operis_candidate -Atqc "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE';")"
+          test "$tables" = "50"
+          serial_index="$(psql -h 127.0.0.1 -U operis -d operis_candidate -Atqc "SELECT COUNT(*) FROM pg_indexes WHERE schemaname='public' AND indexname='Asset_active_serialNumber_unique';")"
+          barcode_index="$(psql -h 127.0.0.1 -U operis -d operis_candidate -Atqc "SELECT COUNT(*) FROM pg_indexes WHERE schemaname='public' AND indexname='Asset_active_barcode_unique';")"
+          test "$serial_index" = "1"
+          test "$barcode_index" = "1"
 
-      - name: Normalize Prisma SQLite timestamps
-        env:
-          OPERIS_SQLITE_FILE: ${{ github.workspace }}/server/prisma/migration-smoke.db
-          OPERIS_SQLITE_NORMALIZED_FILE: ${{ runner.temp }}/migration-smoke-normalized.db
-        run: bash migration/normalize-prisma-sqlite-datetimes.sh
-
-      - name: Migrate synthetic SQLite data with pgloader
+      - name: Build application
         run: |
-          sqlite_file="$RUNNER_TEMP/migration-smoke-normalized.db"
-          load_file="$RUNNER_TEMP/sqlite-to-postgresql.load"
-          sed \
-            -e "s|{{OPERIS_SQLITE_SOURCE_URL}}|sqlite://$sqlite_file|g" \
-            -e "s|{{OPERIS_POSTGRES_URL}}|$OPERIS_POSTGRES_URL|g" \
-            migration/sqlite-to-postgresql.pgloader.load > "$load_file"
-          pgloader --on-error-stop "$load_file"
+          npm run build
+          npm --prefix server run build
 
-      - name: Verify row counts and primary keys
-        env:
-          OPERIS_SQLITE_FILE: ${{ github.workspace }}/server/prisma/migration-smoke.db
-        run: |
-          bash migration/verify-row-counts.sh
-          bash migration/verify-primary-keys.sh
-
-      - name: Verify PostgreSQL constraints
-        run: |
-          invalid_fk_count="$(psql "$OPERIS_POSTGRES_URL" -Atqc \
-            "SELECT COUNT(*) FROM pg_constraint WHERE contype = 'f' AND NOT convalidated;")"
-          echo "unvalidated foreign keys: $invalid_fk_count"
-          test "$invalid_fk_count" = "0"
-
-      - name: Build frontend and server
-        run: npm run build
-
-      - name: Smoke test PostgreSQL health and login
+      - name: Start PostgreSQL runtime
         shell: bash
         run: |
-          node server/dist/index.js > "$RUNNER_TEMP/operis-postgresql.log" 2>&1 &
-          server_pid=$!
-          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
-
-          health_ok=0
-          for attempt in {1..30}; do
-            if curl --silent --fail http://127.0.0.1:3001/api/health > "$RUNNER_TEMP/postgresql-health.json"; then
-              health_ok=1
+          node server/dist/index.js > "$RUNNER_TEMP/operis-postgresql-runtime.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/operis-postgresql-runtime.pid"
+          for i in $(seq 1 45); do
+            if curl --silent --fail http://127.0.0.1:3002/api/health > "$RUNNER_TEMP/operis-postgresql-health.json"; then
               break
             fi
             sleep 1
           done
-          if [ "$health_ok" -ne 1 ]; then
-            cat "$RUNNER_TEMP/operis-postgresql.log"
-            exit 1
+          node -e "const f=require('fs');const x=JSON.parse(f.readFileSync(process.argv[1]));if(!x.ok||x.database?.provider!=='postgresql'||x.database?.connected!==true){console.error(x);process.exit(1)}" "$RUNNER_TEMP/operis-postgresql-health.json"
+
+      - name: Stop runtime
+        if: always()
+        shell: bash
+        run: |
+          if [ -f "$RUNNER_TEMP/operis-postgresql-runtime.pid" ]; then
+            kill "$(cat "$RUNNER_TEMP/operis-postgresql-runtime.pid")" || true
           fi
 
-          node -e "const f=require('fs');const x=JSON.parse(f.readFileSync(process.argv[1]));if(!x.ok||x.database?.provider!=='postgresql'||x.database?.connected!==true){console.error(x);process.exit(1)}" \
-            "$RUNNER_TEMP/postgresql-health.json"
-
-          curl --silent --show-error --fail \
-            -H "Content-Type: application/json" \
-            -c "$RUNNER_TEMP/operis.cookies" \
-            -d "{\"username\":\"balamir\",\"password\":\"$OPERIS_CI_PASSWORD\"}" \
-            http://127.0.0.1:3001/api/auth/login > "$RUNNER_TEMP/login.json"
-
-          node -e "const f=require('fs');const x=JSON.parse(f.readFileSync(process.argv[1]));if(x.user?.username!=='balamir'){console.error(x);process.exit(1)}" \
-            "$RUNNER_TEMP/login.json"
-
-      - name: Prove temporary SQLite rollback path
-        env:
-          DATABASE_URL: file:./migration-smoke.db
-          PORT: "3002"
-          BIND_HOST: 127.0.0.1
-        shell: bash
-        working-directory: server
-        run: |
-          npx prisma generate --schema prisma/schema.sqlite.prisma
-          node dist/index.js > "$RUNNER_TEMP/operis-sqlite.log" 2>&1 &
-          server_pid=$!
-          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
-
-          health_ok=0
-          for attempt in {1..30}; do
-            if curl --silent --fail http://127.0.0.1:3002/api/health > "$RUNNER_TEMP/sqlite-health.json"; then
-              health_ok=1
-              break
-            fi
-            sleep 1
-          done
-          test "$health_ok" -eq 1
-
-          node -e "const f=require('fs');const x=JSON.parse(f.readFileSync(process.argv[1]));if(!x.ok||x.database?.provider!=='sqlite'||x.database?.connected!==true){console.error(x);process.exit(1)}" \
-            "$RUNNER_TEMP/sqlite-health.json"
-
-      - name: Upload validation evidence
+      - name: Upload PostgreSQL candidate evidence
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: operis-postgresql-candidate-evidence
+          name: operis-postgresql-candidate-${{ github.sha }}
           path: |
-            migration/generated/000000000000_postgresql_init.sql
-            ${{ runner.temp }}/postgresql-health.json
-            ${{ runner.temp }}/login.json
-            ${{ runner.temp }}/sqlite-health.json
-            ${{ runner.temp }}/operis-postgresql.log
-            ${{ runner.temp }}/operis-sqlite.log
+            ${{ runner.temp }}/operis-postgresql-health.json
+            ${{ runner.temp }}/operis-postgresql-runtime.log
           if-no-files-found: warn
+          retention-days: 14

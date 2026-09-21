@@ -12,108 +12,91 @@ concurrency:
 
 jobs:
   regression:
-    name: Regression / Kilitli Modüller
+    name: Regression / Locked Modules
     runs-on: ubuntu-latest
     steps:
-      - name: Repository checkout
-        uses: actions/checkout@v6
-
-      - name: Node.js 24.21.0
-        uses: actions/setup-node@v6
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: "24.21.0"
-
-      - name: Kritik çalışan modülleri hash ile doğrula
-        run: node tests/verify-regression-baseline.cjs
+      - run: node tests/verify-regression-baseline.cjs
 
   frontend:
     name: Frontend TypeScript + Production Build
     runs-on: ubuntu-latest
     steps:
-      - name: Repository checkout
-        uses: actions/checkout@v6
-
-      - name: Node.js 24.21.0
-        uses: actions/setup-node@v6
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: "24.21.0"
-
-      - name: Frontend bağımlılıklarını kur
-        run: npm ci --no-audit --no-fund
-
-      - name: Ayarlar ve statik asset regresyon kontratı
-        run: node tests/ci/settings-and-static-asset-regression.cjs
-
-      - name: TypeScript kontrolü
-        run: npm run typecheck
-
-      - name: Production build
-        run: npx vite build
-
-      - name: Frontend CSS ve statik asset contract
-        run: node tests/ci/verify-frontend-css-build.cjs
+      - run: npm ci --no-audit --no-fund
+      - run: node tests/ci/settings-and-static-asset-regression.cjs
+      - run: npm run typecheck
+      - run: npx vite build
+      - run: node tests/ci/verify-frontend-css-build.cjs
 
   backend:
-    name: Backend + Prisma
+    name: Backend + PostgreSQL Prisma
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: operis_ci
+          POSTGRES_USER: operis
+          POSTGRES_PASSWORD: operis_ci_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U operis -d operis_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     env:
-      DATABASE_URL: file:./ci.db
+      DATABASE_URL: postgresql://operis:operis_ci_password@127.0.0.1:5432/operis_ci?schema=public
     steps:
-      - name: Repository checkout
-        uses: actions/checkout@v6
-
-      - name: Node.js 24.21.0
-        uses: actions/setup-node@v6
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: "24.21.0"
-
-      - name: Backend bağımlılıklarını kur
+      - name: Install backend dependencies
         working-directory: server
         run: npm ci --no-audit --no-fund
-
-      - name: ZIP restore compatibility and allocation safety
-        run: node tests/verify-zip-restore-safety.cjs
-
-      - name: Prisma schema doğrula
+      - name: PostgreSQL-only contract
+        run: node tests/ci/postgresql-only-contract.cjs
+      - name: Prisma validate
         working-directory: server
         run: npx prisma validate
-
-      - name: Prisma Client üret
+      - name: Prisma generate
         working-directory: server
         run: npx prisma generate
-
-      - name: Backend TypeScript build
+      - name: Create PostgreSQL schema
+        working-directory: server
+        run: npx prisma db push --skip-generate
+      - name: Backend build
         working-directory: server
         run: npm run build
 
   helpdesk-guards:
-    name: Help Desk Yapısal Güvenlik Kontrolleri
+    name: Help Desk Structural Guards
     runs-on: ubuntu-latest
     steps:
-      - name: Repository checkout
-        uses: actions/checkout@v6
-
-      - name: Node.js 24.21.0
-        uses: actions/setup-node@v6
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: "24.21.0"
-
-      - name: Help Desk beklenen guard ve yetkileri
-        run: node tests/verify-helpdesk-structure.cjs
+      - run: node tests/verify-helpdesk-structure.cjs
 
   progress-ui:
     name: Windows Progress UI Contract + Runtime
     runs-on: windows-2022
     timeout-minutes: 15
     steps:
-      - name: Repository checkout
-        uses: actions/checkout@v6
-
-      - name: Progress UI contract on Windows PowerShell 5.1
+      - uses: actions/checkout@v6
+      - name: Progress UI contract
         shell: powershell
         run: .\tests\windows\progress-ui-contract.ps1
-
-      - name: Progress UI process runtime on Windows PowerShell 5.1 STA
+      - name: Progress UI runtime
         shell: powershell
         run: |
           $evidence = Join-Path $env:RUNNER_TEMP 'progress-ui-evidence.json'

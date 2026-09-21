@@ -9,6 +9,7 @@ for (const required of [
   'name: OPERIS Autonomous QA Agent',
   'node-version: "24.21.0"',
   'node scripts/qa/operis-qa-agent.cjs',
+  'DATABASE_URL: postgresql://operis:operis_ci_password@127.0.0.1:5432/operis_qa?schema=public',
   'if: always()',
   'operis-qa-agent-evidence-${{ github.sha }}',
   'run_real_windows:',

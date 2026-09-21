@@ -103,9 +103,7 @@ function Get-OperatingSystemInfo {
 
 function Get-InstallMode {
     $versionFile = Join-Path $InstallRoot "VERSION.txt"
-    $database = Join-Path $InstallRoot "server\prisma\yaklasan-isler.db"
-    $legacyDatabase = Join-Path $env:ProgramData "YaklasanIsler\server\prisma\yaklasan-isler.db"
-
+    $envFile = Join-Path $InstallRoot "server\.env"
     if (Test-Path $versionFile) {
         $script:PreviousVersion = (Get-Content $versionFile -Raw -ErrorAction SilentlyContinue).Trim()
         try {
@@ -116,21 +114,14 @@ function Get-InstallMode {
                 $script:SameVersionMaintenance = $true
                 $maintenanceAction = ([string]$env:OPERIS_MAINTENANCE_ACTION).Trim().ToUpperInvariant()
                 if ([string]::IsNullOrWhiteSpace($maintenanceAction)) { $maintenanceAction = "REPAIR" }
-                if ($maintenanceAction -notin @("REPAIR", "REFRESH")) {
-                    throw "SAME_VERSION maintenance action must be REPAIR or REFRESH."
-                }
+                if ($maintenanceAction -notin @("REPAIR", "REFRESH")) { throw "SAME_VERSION maintenance action must be REPAIR or REFRESH." }
                 return $maintenanceAction
             }
-        } catch [System.Management.Automation.RuntimeException] {
-            throw
-        } catch {
-            Write-Log "Kurulu sürüm karşılaştırılamadı; güvenli UPDATE akışı kullanılacak: $script:PreviousVersion" "WARN"
-        }
+        } catch [System.Management.Automation.RuntimeException] { throw }
+        catch { Write-Log "Kurulu sürüm karşılaştırılamadı; güvenli UPDATE akışı kullanılacak: $script:PreviousVersion" "WARN" }
         return "UPDATE"
     }
-    if ((Test-Path $database) -or (Test-Path $legacyDatabase) -or (Test-Path $InstallRoot)) {
-        return "REPAIR"
-    }
+    if (Test-Path $envFile) { return "REPAIR" }
     return "NEW"
 }
 
@@ -178,18 +169,16 @@ function Verify-RollbackHealth {
     $lastError = ""
     for ($attempt = 1; $attempt -le 30; $attempt++) {
         try {
-            $health = Invoke-RestMethod -Uri "http://${rollbackIp}:$rollbackPort/api/health" -TimeoutSec 5
+            $rollbackUrl = "http://{0}:{1}/api/health" -f $rollbackIp,$rollbackPort
+            $health = Invoke-RestMethod -Uri $rollbackUrl -TimeoutSec 5
             $versionOk = [string]::IsNullOrWhiteSpace($script:PreviousVersion) -or ([string]$health.version -eq $script:PreviousVersion)
-            $expectsPostgresql = $script:DatabaseState -and -not $script:DatabaseState.SQLite
-            $databaseOk = if ($expectsPostgresql) { $health.database.provider -eq "postgresql" -and $health.database.connected } else { $true }
+            $databaseOk = $health.database.provider -eq "postgresql" -and $health.database.connected
             if ($health.ok -and $versionOk -and $databaseOk) {
                 Write-Log "Rollback health doğrulaması başarılı. Sürüm: $($health.version)" "WARN"
                 return $true
             }
             $lastError = "Rollback health mismatch: ok=$($health.ok), version=$($health.version), provider=$($health.database.provider), connected=$($health.database.connected)"
-        } catch {
-            $lastError = $_.Exception.Message
-        }
+        } catch { $lastError = $_.Exception.Message }
         Start-Sleep -Seconds 2
     }
     throw "Rollback health doğrulaması başarısız: $lastError"
@@ -580,18 +569,6 @@ function Backup-ExistingInstallation {
     $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
     $backupFolder = Join-Path $BackupsRoot "PreInstall-$stamp"
     New-Item -ItemType Directory -Path $backupFolder -Force | Out-Null
-
-    $candidates = @(
-        (Join-Path $InstallRoot "server\prisma\yaklasan-isler.db"),
-        (Join-Path $env:ProgramData "YaklasanIsler\server\prisma\yaklasan-isler.db")
-    )
-    foreach ($candidate in $candidates) {
-        if (Test-Path $candidate) {
-            Copy-Item $candidate (Join-Path $backupFolder "yaklasan-isler.db") -Force
-            break
-        }
-    }
-
     $envCandidates = @(
         (Join-Path $InstallRoot "server\.env"),
         (Join-Path $env:ProgramData "YaklasanIsler\server\.env")
@@ -599,14 +576,9 @@ function Backup-ExistingInstallation {
     foreach ($candidate in $envCandidates) {
         if (Test-Path $candidate) {
             Copy-Item $candidate (Join-Path $backupFolder "server.env") -Force
+            Write-Log "Mevcut sunucu yapılandırması yedeklendi: $backupFolder"
             break
         }
-    }
-
-    if (Test-Path (Join-Path $backupFolder "yaklasan-isler.db")) {
-        $hash = (Get-FileHash (Join-Path $backupFolder "yaklasan-isler.db") -Algorithm SHA256).Hash
-        Set-Content (Join-Path $backupFolder "SHA256.txt") $hash -Encoding ASCII
-        Write-Log "Mevcut veritabanı yedeklendi: $backupFolder"
     }
     return $backupFolder
 }
@@ -616,55 +588,24 @@ function Copy-ApplicationFiles([string]$BackupFolder) {
     Get-ChildItem $InstallRoot -Force -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -notin $preserve } |
         Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-
     Get-ChildItem $SourceRoot -Force |
         Where-Object { $_.Name -notin @("node_modules", ".git", "dist", "server\dist", "server\public") } |
         ForEach-Object { Copy-Item $_.FullName -Destination $InstallRoot -Recurse -Force }
-
-    $databaseBackup = Join-Path $BackupFolder "yaklasan-isler.db"
-    if (Test-Path $databaseBackup) {
-        $target = Join-Path $InstallRoot "server\prisma\yaklasan-isler.db"
-        New-Item -ItemType Directory -Path (Split-Path $target) -Force | Out-Null
-        Copy-Item $databaseBackup $target -Force
-    }
-
     $envBackup = Join-Path $BackupFolder "server.env"
-    if (Test-Path $envBackup) {
-        Copy-Item $envBackup (Join-Path $InstallRoot "server\.env") -Force
-    }
+    if (Test-Path $envBackup) { Copy-Item $envBackup (Join-Path $InstallRoot "server\.env") -Force }
 }
-
-
 
 function Capture-PreservedSettings {
     $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
     $safeRoot = Join-Path $env:ProgramData "Operis-Installer-State"
     $snapshot = Join-Path $safeRoot "Settings-$stamp"
     New-Item -ItemType Directory -Path $snapshot -Force | Out-Null
-
-    $dbCandidates = @(
-        (Join-Path $ExternalImportRoot "yaklasan-isler.db"),
-        (Join-Path $ExternalImportRoot "server\prisma\yaklasan-isler.db"),
-        (Join-Path $InstallRoot "server\prisma\yaklasan-isler.db"),
-        (Join-Path $env:ProgramData "YaklasanIsler\server\prisma\yaklasan-isler.db")
-    )
     $envCandidates = @(
         (Join-Path $ExternalImportRoot "server.env"),
         (Join-Path $ExternalImportRoot "server\.env"),
         (Join-Path $InstallRoot "server\.env"),
         (Join-Path $env:ProgramData "YaklasanIsler\server\.env")
     )
-
-    foreach ($candidate in $dbCandidates) {
-        if (Test-Path $candidate) {
-            $target = Join-Path $snapshot "yaklasan-isler.db"
-            Copy-Item $candidate $target -Force
-            $script:PreservedSettingsDb = $target
-            Write-Log "Mevcut bağlantı/ayar veritabanı korumaya alındı: $candidate"
-            break
-        }
-    }
-
     foreach ($candidate in $envCandidates) {
         if (Test-Path $candidate) {
             $target = Join-Path $snapshot "server.env"
@@ -674,12 +615,10 @@ function Capture-PreservedSettings {
             break
         }
     }
-
-    if ($script:PreservedSettingsDb -or $script:PreservedSettingsEnv) {
-        $script:PreservedSettingsRoot = $snapshot
-    } else {
+    if ($script:PreservedSettingsEnv) { $script:PreservedSettingsRoot = $snapshot }
+    else {
         Remove-Item $snapshot -Recurse -Force -ErrorAction SilentlyContinue
-        Write-Log "Aktarılacak eski mail/veritabanı bağlantı ayarı bulunamadı." "WARN"
+        Write-Log "Aktarılacak eski .env yapılandırması bulunamadı." "WARN"
     }
 }
 
@@ -727,33 +666,8 @@ function Clear-OneTimeImportConfig {
 }
 
 function Import-PreservedSettings {
-    if (-not $script:PreservedSettingsDb -or -not (Test-Path $script:PreservedSettingsDb)) {
-        Write-Log "Aktarılacak eski bağlantı ayarı veritabanı yok; temiz varsayılan ayarlarla devam ediliyor."
-        return
-    }
-
-    $targetDb = Join-Path $InstallRoot "server\prisma\yaklasan-isler.db"
-    $importScript = Join-Path $InstallRoot "server\scripts\import-preserved-settings.mjs"
-    if (-not (Test-Path $targetDb)) { throw "Ayar aktarımı için hedef veritabanı bulunamadı: $targetDb" }
-    if (-not (Test-Path $importScript)) { throw "Ayar aktarım scripti bulunamadı: $importScript" }
-
     Restore-PreservedEncryptionKey
-
-    $oldSource = $env:OPERIS_SETTINGS_SOURCE_DB
-    $oldTarget = $env:OPERIS_SETTINGS_TARGET_DB
-    try {
-        $env:OPERIS_SETTINGS_SOURCE_DB = $script:PreservedSettingsDb
-        $env:OPERIS_SETTINGS_TARGET_DB = $targetDb
-        Write-Log "Mevcut mail ve harici veritabanı bağlantıları yeni temiz kuruluma aktarılıyor."
-        & $script:NodePath $importScript
-        if ($LASTEXITCODE -ne 0) {
-            throw "Bağlantı/ayar aktarımı başarısız. Node çıkış kodu: $LASTEXITCODE"
-        }
-    }
-    finally {
-        $env:OPERIS_SETTINGS_SOURCE_DB = $oldSource
-        $env:OPERIS_SETTINGS_TARGET_DB = $oldTarget
-    }
+    Write-Log "PostgreSQL-only kurulum: eski dosya tabanlı veritabanı içeriği aktarılmıyor."
 }
 
 function Read-OperisServerConfig {
@@ -903,9 +817,8 @@ function Save-OperisNetworkBinding {
 }
 
 function Ensure-EnvironmentFile {
-    if ([string]::IsNullOrWhiteSpace($script:SelectedIPv4)) {
-        throw "Yayın IP adresi seçilmeden ortam dosyası hazırlanamaz."
-    }
+    if ([string]::IsNullOrWhiteSpace($script:SelectedIPv4)) { throw "Yayın IP adresi seçilmeden ortam dosyası hazırlanamaz." }
+    if (-not $script:Postgres -or [string]::IsNullOrWhiteSpace([string]$script:Postgres.DatabaseUrl)) { throw "PostgreSQL bağlantısı hazırlanmadı." }
 
     $networkPublicUrl = "http://$($script:SelectedIPv4):$Port"
     $allowedOrigins = "http://$($script:SelectedIPv4):$Port"
@@ -913,8 +826,8 @@ function Ensure-EnvironmentFile {
 
     if (Test-Path $targetEnv) {
         $text = Get-Content $targetEnv -Raw
-
         $pairs = [ordered]@{
+            DATABASE_URL = "$($script:Postgres.DatabaseUrl)"
             PORT = "$Port"
             BIND_HOST = "$($script:SelectedIPv4)"
             NODE_ENV = "production"
@@ -922,22 +835,14 @@ function Ensure-EnvironmentFile {
             PUBLIC_URL = "$networkPublicUrl"
             CLIENT_ORIGIN = "$allowedOrigins"
         }
-
         foreach ($entry in $pairs.GetEnumerator()) {
             $key = $entry.Key
             $value = $entry.Value
             if ($text -match "(?m)^$([regex]::Escape($key))=") {
                 $text = [regex]::Replace($text, "(?m)^$([regex]::Escape($key))=.*$", "$key=$value")
-            } else {
-                $text += "`r`n$key=$value"
-            }
+            } else { $text += [Environment]::NewLine + "$key=$value" }
         }
-
-        [System.IO.File]::WriteAllText(
-            $targetEnv,
-            $text.Trim() + [Environment]::NewLine,
-            [System.Text.UTF8Encoding]::new($false)
-        )
+        [System.IO.File]::WriteAllText($targetEnv,$text.Trim()+[Environment]::NewLine,[System.Text.UTF8Encoding]::new($false))
         Save-OperisNetworkBinding
         return
     }
@@ -950,28 +855,23 @@ function Ensure-EnvironmentFile {
         $rng.GetBytes($encBytes)
         $jwt = [Convert]::ToBase64String($jwtBytes)
         $enc = [Convert]::ToBase64String($encBytes)
-    } finally {
-        $rng.Dispose()
-    }
+    } finally { $rng.Dispose() }
 
     $envContent = @"
-DATABASE_URL="file:./yaklasan-isler.db"
-JWT_SECRET="$jwt"
-DATA_ENCRYPTION_KEY="$enc"
-CLIENT_ORIGIN="$allowedOrigins"
+DATABASE_URL=$($script:Postgres.DatabaseUrl)
+JWT_SECRET=$jwt
+DATA_ENCRYPTION_KEY=$enc
+CLIENT_ORIGIN=$allowedOrigins
 PORT=$Port
-BIND_HOST="$($script:SelectedIPv4)"
+BIND_HOST=$($script:SelectedIPv4)
 NODE_ENV=production
 COOKIE_SECURE=false
-PUBLIC_URL="$networkPublicUrl"
+PUBLIC_URL=$networkPublicUrl
 "@
-    [System.IO.File]::WriteAllText(
-        $targetEnv,
-        $envContent.Trim() + [Environment]::NewLine,
-        [System.Text.UTF8Encoding]::new($false)
-    )
+    [System.IO.File]::WriteAllText($targetEnv,$envContent.Trim()+[Environment]::NewLine,[System.Text.UTF8Encoding]::new($false))
     Save-OperisNetworkBinding
 }
+
 function Install-Runner {
     New-Item -ItemType Directory -Path (Join-Path $InstallRoot "windows") -Force | Out-Null
     $runner = @'
@@ -1189,7 +1089,6 @@ try {
 
     Write-Step "Kurulum öncesi güvenli yedek alınıyor"
     $backupFolder = Backup-ExistingInstallation
-    if ($script:SQLiteMigrationSource) { Copy-Item $script:SQLiteMigrationSource (Join-Path $backupFolder 'yaklasan-isler.db') -Force }
     if (Test-Path (Join-Path $script:PreCutoverRoot 'server.env')) {
         Copy-Item (Join-Path $script:PreCutoverRoot 'server.env') (Join-Path $backupFolder 'server.env') -Force
     }
@@ -1220,8 +1119,7 @@ try {
     Ensure-EnvironmentFile
 
     Write-Step "Veritabanı ve Prisma istemcisi hazırlanıyor"
-    if ($script:SameVersionMaintenance -and $script:DatabaseState -and -not $script:DatabaseState.SQLite) {
-        Copy-Item (Join-Path $InstallRoot 'server\prisma\schema.postgresql.prisma') (Join-Path $InstallRoot 'server\prisma\schema.prisma') -Force
+    if ($script:SameVersionMaintenance -and $script:DatabaseState) {
         $env:DATABASE_URL = $script:Postgres.DatabaseUrl
         Invoke-Npm (Join-Path $InstallRoot 'server') @('run','prisma:generate')
         Write-Log "Same-version $script:InstallMode: PostgreSQL Prisma istemcisi yeniden üretildi; mevcut PostgreSQL şema/verisine db push uygulanmayacak."

@@ -38,10 +38,12 @@ $assertions = [ordered]@{
         $installerSource -match 'db push uygulanmayacak'
     )
     SameVersionRegeneratesPostgresqlPrismaClient = (
-        $installerSource -match '(?s)if\s*\(\$script:SameVersionMaintenance\s+-and\s+\$script:DatabaseState\s+-and\s+-not\s+\$script:DatabaseState\.SQLite\)\s*\{.*?schema\.postgresql\.prisma.*?prisma:generate.*?\}\s*else\s*\{\s*Initialize-OperisPostgresql'
+        $installerSource -match '(?s)if\s*\(\$script:SameVersionMaintenance\s+-and\s+\$script:DatabaseState\)\s*\{.*?prisma:generate.*?\}\s*else\s*\{\s*Initialize-OperisPostgresql'
     )
-    SameVersionSqliteStillMigratesToPostgresql = (
-        $installerSource -match '(?s)if\s*\(\$script:SameVersionMaintenance\s+-and\s+\$script:DatabaseState\s+-and\s+-not\s+\$script:DatabaseState\.SQLite\)\s*\{.*?\}\s*else\s*\{\s*Initialize-OperisPostgresql'
+    PostgreSQLOnlyNoSqliteMigration = (
+        $installerText -notmatch 'SQLiteMigrationSource' -and
+        $installerText -notmatch 'migrate-sqlite' -and
+        $installerText -notmatch 'backup-sqlite'
     )
     PrismaGenerate = ($installerText -match 'prisma:generate')
     PrismaPush = ($installerText -match 'prisma:push')
@@ -50,8 +52,8 @@ $assertions = [ordered]@{
     Health = ($installerText -match '/api/health')
     RollbackHealthVerification = (
         $installerSource -match 'function\s+Verify-RollbackHealth' -and
-        $installerSource -match '\$expectsPostgresql\s*=\s*\$script:DatabaseState\s+-and\s+-not\s+\$script:DatabaseState\.SQLite' -and
-        $installerSource -match '(?s)\$databaseOk\s*=\s*if\s*\(\$expectsPostgresql\).*?database\.provider.*?database\.connected.*?else\s*\{\s*\$true\s*\}' -and
+        $installerSource -match 'database\.provider\s*-eq\s*"postgresql"' -and
+        $installerSource -match 'database\.connected' -and
         $installerSource -match 'if\s*\(\$health\.ok\s+-and\s+\$versionOk\s+-and\s+\$databaseOk\)'
     )
     CIOnlyFailureInjection = (

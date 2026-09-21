@@ -39,7 +39,7 @@ jobs:
       - name: Generate Prisma client
         shell: pwsh
         env:
-          DATABASE_URL: file:./qa-agent.db
+          DATABASE_URL: postgresql://operis:operis_ci_password@127.0.0.1:5432/operis_qa?schema=public
         run: npm --prefix server run prisma:generate
       - name: Verify autonomous agent contracts
         shell: pwsh
@@ -50,7 +50,7 @@ jobs:
       - name: Run autonomous QA agent
         shell: pwsh
         env:
-          DATABASE_URL: file:./qa-agent.db
+          DATABASE_URL: postgresql://operis:operis_ci_password@127.0.0.1:5432/operis_qa?schema=public
           OPERIS_QA_EVIDENCE_DIR: ${{ runner.temp }}\operis-qa-agent
           OPERIS_ALLOW_PRODUCTION_CUTOVER: 'false'
         run: node scripts/qa/operis-qa-agent.cjs
@@ -93,12 +93,12 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           npm --prefix server ci --no-audit --no-fund
-          $env:DATABASE_URL='file:./qa-agent.db'
+          $env:DATABASE_URL='postgresql://operis:operis_ci_password@127.0.0.1:5432/operis_qa?schema=public'
           npm --prefix server run prisma:generate
       - name: Run autonomous QA agent on self-hosted Windows
         shell: pwsh
         env:
-          DATABASE_URL: file:./qa-agent.db
+          DATABASE_URL: postgresql://operis:operis_ci_password@127.0.0.1:5432/operis_qa?schema=public
           OPERIS_QA_EVIDENCE_DIR: ${{ runner.temp }}\operis-qa-agent-real
           OPERIS_ALLOW_PRODUCTION_CUTOVER: 'false'
         run: node scripts/qa/operis-qa-agent.cjs
