@@ -18,7 +18,7 @@ const checks = [
   ['Workflow gets PostgreSQL URL from secret', workflow.includes('secrets.OPERIS_STAGING_POSTGRES_URL')],
   ['Workflow checks exact target DB variable', workflow.includes('vars.OPERIS_STAGING_TARGET_DB')],
   ['Workflow pins Node 24.21.0', workflow.includes('node-version: "24.21.0"')],
-  ['Workflow locates OPERIS managed or standard Windows psql client', workflow.includes('C:\\\\ProgramData\\\\OperisPostgreSQL\\\\server\\\\bin\\\\psql.exe') && workflow.includes('PostgreSQL\\\\*\\\\bin\\\\psql.exe') && workflow.includes('OPERIS_PSQL')],
+  ['Workflow locates OPERIS managed or standard Windows psql client', workflow.includes('C:\\ProgramData\\OperisPostgreSQL\\server\\bin\\psql.exe') && workflow.includes('PostgreSQL\\\\*\\\\bin\\\\psql.exe') && workflow.includes('OPERIS_PSQL')],
   ['Workflow rejects workspace SQLite source', workflow.includes('GITHUB_WORKSPACE') && workflow.includes('Resolve') === false && workflow.includes('GetFullPath')],
   ['Workflow rejects reparse-point SQLite source', workflow.includes('ReparsePoint')],
   ['Workflow hashes SQLite source before migration', workflow.includes('Get-FileHash') && workflow.includes('OPERIS_SOURCE_SHA256')],
