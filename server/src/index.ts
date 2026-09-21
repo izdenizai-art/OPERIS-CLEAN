@@ -611,7 +611,7 @@ app.get('/api/admin/system-performance', requireAuth, requirePermission((_permis
   const onlineThreshold = new Date(Date.now() - 5 * 60 * 1000);
   const [activeSessions, databaseRows] = await Promise.all([
     prisma.userSession.count({
-      where: { revokedAt: null, expiresAt: { gt: new Date() }, lastSeenAt: { gte: onlineThreshold } },
+      where: { revokedAt: null, lastSeenAt: { gte: onlineThreshold } },
     }),
     prisma.$queryRawUnsafe<Array<{
       connectionCount: number;
