@@ -16,24 +16,43 @@ permissions:
   contents: read
 
 jobs:
-  windows-postgresql-rehearsal:
-    name: Windows PostgreSQL provision + backup/restore rehearsal
+  postgresql-provision:
+    name: PostgreSQL 16 automatic provisioning and reuse
     runs-on: windows-2022
-    timeout-minutes: 45
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+      - name: Provision and verify reuse
+        shell: pwsh
+        env:
+          GITHUB_ACTIONS: "true"
+        run: .\tests\windows\postgresql-provision-smoke.ps1
+      - name: Upload provisioning evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: operis-postgresql-provision-${{ github.sha }}
+          path: ${{ runner.temp }}\operis-provision-evidence
+          if-no-files-found: warn
+
+  enterprise-installer:
+    name: Clean installer + reinstall + backup/restore
+    runs-on: windows-2022
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
           node-version: "24.21.0"
-
-      - name: PostgreSQL provisioning safety
-        shell: pwsh
-        env:
-          GITHUB_ACTIONS: "true"
-        run: .\tests\windows\postgresql-provision-smoke.ps1
-
-      - name: Windows installer PostgreSQL integration
+      - name: Run isolated enterprise PostgreSQL integration
         shell: pwsh
         env:
           GITHUB_ACTIONS: "true"
         run: .\tests\windows\enterprise-postgresql-integration.ps1 -Scenario clean
+      - name: Upload installer evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: operis-enterprise-postgresql-${{ github.sha }}
+          path: ${{ runner.temp }}\operis-installer-evidence
+          if-no-files-found: warn
