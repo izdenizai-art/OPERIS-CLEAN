@@ -80,13 +80,18 @@ jobs:
           if ($command) {
             $psql = $command.Source
           } else {
-            $candidates = @(
-              Get-ChildItem -Path "$env:ProgramFiles\PostgreSQL\*\bin\psql.exe" -File -ErrorAction SilentlyContinue
-            ) | Sort-Object FullName -Descending
-            if ($candidates.Count -lt 1) {
-              throw "psql.exe bulunamadi. Windows PostgreSQL client/server kurulumu gerekli."
+            $managed = 'C:\ProgramData\OperisPostgreSQL\server\bin\psql.exe'
+            if (Test-Path -LiteralPath $managed) {
+              $psql = $managed
+            } else {
+              $candidates = @(
+                Get-ChildItem -Path "$env:ProgramFiles\PostgreSQL\*\bin\psql.exe" -File -ErrorAction SilentlyContinue
+              ) | Sort-Object FullName -Descending
+              if ($candidates.Count -lt 1) {
+                throw "psql.exe bulunamadi. OPERIS managed PostgreSQL veya Windows PostgreSQL client/server kurulumu gerekli."
+              }
+              $psql = $candidates[0].FullName
             }
-            $psql = $candidates[0].FullName
           }
 
           & $psql --version
