@@ -21,9 +21,18 @@ assert.equal(gate.items.autonomousQaAgent.status, 'PASS');
 assert.equal(gate.items.scheduledPostgresqlBackup.status, 'PASS');
 assert.equal(gate.items.realInstallerRepair.status, 'PASS');
 assert.equal(gate.items.rebootStartup.status, 'PENDING');
-assert.equal(gate.items.sqliteToPostgresqlStaging.status, 'PENDING');
+assert.equal(gate.items.sqliteToPostgresqlStaging.status, 'NOT_APPLICABLE');
+assert.equal(gate.items.concurrentCapacity.status, 'PENDING');
 assert.equal(gate.items.productionCutover.status, 'NOT_APPLICABLE');
 assert.notEqual(gate.overall, 'PASS', 'missing mandatory evidence must prevent final PASS');
+
+const legacyCapacityGate = gateBuilder.buildGate({
+  sourceSha: 'abc123',
+  evidence: {
+    load100Users: { status: 'PASS', evidence: 'legacy-capacity.json' },
+  },
+});
+assert.equal(legacyCapacityGate.items.concurrentCapacity.status, 'PASS');
 
 const failGate = gateBuilder.buildGate({
   sourceSha: 'abc123',

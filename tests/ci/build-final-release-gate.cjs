@@ -14,8 +14,8 @@ const ITEM_DEFINITIONS = [
   ['realInstallerRepair', 'Real Windows installer repair'],
   ['scheduledPostgresqlBackup', 'Scheduled PostgreSQL backup integrity'],
   ['rebootStartup', 'Real post-install reboot/startup'],
-  ['sqliteToPostgresqlStaging', 'Real SQLite to PostgreSQL staging migration'],
-  ['load100Users', '100-user NORMAL/HELPDESK/MIXED validation'],
+  ['sqliteToPostgresqlStaging', 'Legacy SQLite to PostgreSQL staging migration'],
+  ['concurrentCapacity', 'Concurrent active-user capacity validation'],
   ['adDc', 'AD/DC integration'],
   ['smtp', 'SMTP integration'],
   ['graph', 'Microsoft Graph integration'],
@@ -33,12 +33,14 @@ function validateStatus(status) {
 }
 
 function defaultItem(id, label) {
-  if (id === 'productionCutover') {
+  if (id === 'productionCutover' || id === 'sqliteToPostgresqlStaging') {
     return {
       id,
       label,
       status: 'NOT_APPLICABLE',
-      reason: 'Production cutover is outside the current requested scope.',
+      reason: id === 'sqliteToPostgresqlStaging'
+        ? 'Legacy SQLite migration is outside the PostgreSQL-only release model.'
+        : 'Production cutover is outside the current requested scope.',
       evidence: null,
     };
   }
@@ -84,6 +86,10 @@ function summarizeOverall(items) {
 function buildGate(options = {}) {
   const sourceSha = options.sourceSha || 'unknown';
   const supplied = { ...(options.evidence || {}) };
+
+  if (!supplied.concurrentCapacity && supplied.load100Users) {
+    supplied.concurrentCapacity = supplied.load100Users;
+  }
 
   if (options.agentEvidence) {
     supplied.autonomousQaAgent = {
