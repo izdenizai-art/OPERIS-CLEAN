@@ -4,7 +4,7 @@ import {
   Info, Mail, Network, Save, Settings2, ShieldCheck, Upload, Users, Vibrate, Volume2,
 } from 'lucide-react';
 import type { AuditLog, BackupSettings, BrandingSettings, Settings } from '@/lib/types';
-import type { LicenseStatus, MailTestResult, ReleaseInfo } from '@/lib/api';
+import type { LicenseStatus, MailTestResult, ReleaseInfo, SystemPerformanceMetrics } from '@/lib/api';
 import { api } from '@/lib/api';
 import AuditLogPanel from './AuditLogPanel';
 import ActiveSessionsPanel from './ActiveSessionsPanel';
@@ -49,7 +49,7 @@ interface Props {
   children?: React.ReactNode;
 }
 
-type SectionKey = 'branding' | 'notifications' | 'mail' | 'data' | 'backup' | 'access' | 'audit' | 'sessions' | 'domain' | 'users' | 'license' | 'about';
+type SectionKey = 'branding' | 'notifications' | 'mail' | 'data' | 'backup' | 'access' | 'audit' | 'sessions' | 'performance' | 'domain' | 'users' | 'license' | 'about';
 
 export default function SettingsPanel(props: Props) {
   const [open, setOpen] = useState<SectionKey>('branding');
@@ -72,6 +72,8 @@ export default function SettingsPanel(props: Props) {
     firewall?: { applied: boolean; reason: string };
   } | null>(null);
   const [remoteAccessBusy, setRemoteAccessBusy] = useState(false);
+  const [performance, setPerformance] = useState<SystemPerformanceMetrics | null>(null);
+  const [performanceError, setPerformanceError] = useState('');
 
   const importRef = useRef<HTMLInputElement>(null);
   const restoreRef = useRef<HTMLInputElement>(null);
@@ -83,6 +85,28 @@ export default function SettingsPanel(props: Props) {
     if (!props.isAdmin) return;
     void api.getRemoteAccessSettings().then(setRemoteAccess).catch(() => setRemoteAccess(null));
   }, [props.isAdmin]);
+
+  useEffect(() => {
+    if (!props.isAdmin || open !== 'performance') return;
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const next = await api.getSystemPerformance();
+        if (!cancelled) {
+          setPerformance(next);
+          setPerformanceError('');
+        }
+      } catch (error) {
+        if (!cancelled) setPerformanceError(error instanceof Error ? error.message : 'Performans bilgisi alınamadı.');
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => { void refresh(); }, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [open, props.isAdmin]);
 
   useEffect(() => {
     if (props.licenseStatus?.expiresAt) {
@@ -562,6 +586,54 @@ export default function SettingsPanel(props: Props) {
 
 
       {props.isAdmin && (
+        <Accordion title="Sistem Performansı" icon={<Settings2 className="h-5 w-5" />} active={open === 'performance'} onToggle={() => setOpen(open === 'performance' ? 'about' : 'performance')}>
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="text-sm font-bold text-white">Canlı Sunucu ve OPERIS Yükü</p>
+                <p className="text-xs text-slate-400">3 saniyede bir yenilenir. Kapasite değerlendirmesi için anlık görünüm sağlar.</p>
+              </div>
+              {performance && <span className={performanceStatus(performance).className}>{performanceStatus(performance).label}</span>}
+            </div>
+
+            {performanceError && <div className="rounded-xl bg-red-500/10 p-3 text-sm text-red-200 ring-1 ring-red-500/30">{performanceError}</div>}
+
+            {performance ? (
+              <>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <PerformanceCard title="CPU">
+                    <div>Sistem: <strong>{performance.system.systemCpuPercent.toFixed(1)}%</strong></div>
+                    <div>OPERIS: <strong>{performance.operis.processCpuPercent.toFixed(1)}%</strong></div>
+                    <div>{performance.system.logicalProcessors} vCPU · {performance.system.cpuModel || 'CPU'}</div>
+                  </PerformanceCard>
+                  <PerformanceCard title="RAM">
+                    <div>Kullanım: <strong>{performance.system.memoryUsedPercent.toFixed(1)}%</strong></div>
+                    <div>{formatBytes(performance.system.usedMemoryBytes)} / {formatBytes(performance.system.totalMemoryBytes)}</div>
+                    <div>OPERIS: {formatBytes(performance.operis.processMemoryBytes)} · Boş: {formatBytes(performance.system.freeMemoryBytes)}</div>
+                  </PerformanceCard>
+                  <PerformanceCard title="Aktif Oturum ve API Yükü">
+                    <div>Aktif Oturum: <strong>{performance.users.activeSessions}</strong></div>
+                    <div>RPS: <strong>{performance.traffic.requestsPerSecond.toFixed(2)}</strong> · Son 60 sn: {performance.traffic.requestCount60s}</div>
+                    <div>API p95: {performance.traffic.p95LatencyMs.toFixed(0)} ms · HTTP hata: %{performance.traffic.httpErrorRatePercent.toFixed(2)}</div>
+                  </PerformanceCard>
+                  <PerformanceCard title="PostgreSQL">
+                    <div>Bağlantı: <strong>{performance.database.connectionCount}</strong> / {performance.database.maxConnections}</div>
+                    <div>Aktif sorgu: {performance.database.activeConnections}</div>
+                    <div>Veritabanı: {formatBytes(performance.database.databaseSizeBytes)}</div>
+                  </PerformanceCard>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+                  <span>{performance.system.hostName} · {performance.system.platform} {performance.system.release} · {performance.system.architecture}</span>
+                  <span>Son ölçüm: {new Date(performance.sampledAt).toLocaleTimeString('tr-TR')}</span>
+                </div>
+              </>
+            ) : (
+              <div className="rounded-xl bg-slate-800/50 p-4 text-sm text-slate-400 ring-1 ring-slate-700">Performans bilgisi yükleniyor…</div>
+            )}
+          </div>
+        </Accordion>
+      )}
+      {props.isAdmin && (
         <Accordion title="Ayrıntılı İşlem Geçmişi" icon={<Settings2 className="h-5 w-5" />} active={open === 'audit'} onToggle={() => setOpen(open === 'audit' ? 'about' : 'audit')}>
           <AuditLogPanel logs={props.auditLogs} onRefresh={props.onRefreshAuditLogs} />
         </Accordion>
@@ -638,6 +710,34 @@ export default function SettingsPanel(props: Props) {
   );
 }
 
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit += 1; }
+  return value.toFixed(unit >= 3 ? 1 : 0) + ' ' + units[unit];
+}
+
+function performanceStatus(metrics: SystemPerformanceMetrics): { label: string; className: string } {
+  const peak = Math.max(metrics.system.systemCpuPercent, metrics.system.memoryUsedPercent);
+  if (peak >= 90 || metrics.traffic.serverErrorRatePercent >= 1) {
+    return { label: 'Kritik', className: 'rounded-full bg-red-500/15 px-3 py-1 text-xs font-bold text-red-300 ring-1 ring-red-500/30' };
+  }
+  if (peak >= 75 || metrics.traffic.p95LatencyMs >= 1500) {
+    return { label: 'Yüksek', className: 'rounded-full bg-amber-500/15 px-3 py-1 text-xs font-bold text-amber-300 ring-1 ring-amber-500/30' };
+  }
+  return { label: 'Normal', className: 'rounded-full bg-emerald-500/15 px-3 py-1 text-xs font-bold text-emerald-300 ring-1 ring-emerald-500/30' };
+}
+
+function PerformanceCard({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-xl bg-slate-800/55 p-3 text-sm text-slate-300 ring-1 ring-slate-700">
+      <div className="mb-2 font-bold text-white">{title}</div>
+      <div className="space-y-1 text-xs leading-5">{children}</div>
+    </div>
+  );
+}
 function Accordion({ title, icon, active, onToggle, children }: { title: string; icon: React.ReactNode; active: boolean; onToggle: () => void; children: React.ReactNode }) {
   return <section className="overflow-hidden rounded-2xl bg-slate-900/60 ring-1 ring-slate-700">
     <button type="button" onClick={onToggle} className="flex w-full items-center justify-between px-4 py-3 text-left">

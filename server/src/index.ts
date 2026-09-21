@@ -12,6 +12,7 @@ import cookieParser from 'cookie-parser';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { prisma } from './db.js';
+import { buildRuntimePerformanceSnapshot, systemPerformanceMiddleware } from './system-performance.js';
 import { clearSession, publicUser, requireAuth, requirePermission, setSession, type AuthRequest } from './auth.js';
 import { activeLoginBlock, clearLoginBlock, normalizeClientIp, observeMacAddress, recordFailedLogin, recordSuccessfulLogin } from './login-security.js';
 import { ADMIN_PERMISSIONS, normalizePermissions, serializeBranchPermissions } from './permissions.js';
@@ -113,6 +114,7 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '5mb' }));
 app.use(cookieParser());
+app.use(systemPerformanceMiddleware);
 
 type RemoteAccessMode = 'SERVER_ONLY' | 'LOCAL_NETWORK' | 'ALL_ALLOWED';
 
@@ -603,6 +605,41 @@ app.get('/api/health', async (req, res) => {
       database: { provider: databaseProvider, connected: false },
     });
   }
+});
+
+app.get('/api/admin/system-performance', requireAuth, requirePermission((_permissions, user) => user.isAdmin), async (_req: AuthRequest, res) => {
+  const onlineThreshold = new Date(Date.now() - 5 * 60 * 1000);
+  const [activeSessions, databaseRows] = await Promise.all([
+    prisma.userSession.count({
+      where: { revokedAt: null, expiresAt: { gt: new Date() }, lastSeenAt: { gte: onlineThreshold } },
+    }),
+    prisma.$queryRawUnsafe<Array<{
+      connectionCount: number;
+      activeConnections: number;
+      maxConnections: number;
+      databaseSizeBytes: bigint;
+    }>>(
+      'SELECT ' +
+      '(SELECT COUNT(*)::int FROM pg_stat_activity WHERE datname = current_database()) AS "connectionCount", ' +
+      '(SELECT COUNT(*)::int FROM pg_stat_activity WHERE datname = current_database() AND state = \'active\') AS "activeConnections", ' +
+      'current_setting(\'max_connections\')::int AS "maxConnections", ' +
+      'pg_database_size(current_database())::bigint AS "databaseSizeBytes"'
+    ),
+  ]);
+
+  const database = databaseRows[0];
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.json({
+    ...buildRuntimePerformanceSnapshot(),
+    users: { activeSessions },
+    database: {
+      provider: 'postgresql',
+      connectionCount: Number(database?.connectionCount ?? 0),
+      activeConnections: Number(database?.activeConnections ?? 0),
+      maxConnections: Number(database?.maxConnections ?? 0),
+      databaseSizeBytes: Number(database?.databaseSizeBytes ?? 0),
+    },
+  });
 });
 
 app.get('/api/version-info', (_req, res) => {

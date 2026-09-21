@@ -224,6 +224,28 @@ export type ActiveSession = {
   online: boolean;
 };
 
+export type SystemPerformanceMetrics = {
+  sampledAt: number;
+  system: {
+    hostName: string; platform: string; release: string; architecture: string; cpuModel: string;
+    logicalProcessors: number; systemCpuPercent: number;
+    totalMemoryBytes: number; usedMemoryBytes: number; freeMemoryBytes: number; memoryUsedPercent: number;
+    uptimeSeconds: number;
+  };
+  operis: {
+    processId: number; processCpuPercent: number; processMemoryBytes: number;
+    heapUsedBytes: number; heapTotalBytes: number; uptimeSeconds: number;
+  };
+  traffic: {
+    requestsPerSecond: number; requestCount60s: number; p95LatencyMs: number;
+    httpErrorRatePercent: number; serverErrorRatePercent: number;
+  };
+  users: { activeSessions: number };
+  database: {
+    provider: 'postgresql'; connectionCount: number; activeConnections: number;
+    maxConnections: number; databaseSizeBytes: number;
+  };
+};
 export type LicenseStatus = {
   ownerUsername: string;
   expiresAt: number | null;
@@ -572,6 +594,7 @@ export const api = {
     request<void>(`/api/assets/labels/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   getAuditLogs: () => request<AuditLog[]>('/api/admin/audit-logs'),
   getActiveSessions: () => request<ActiveSession[]>('/api/admin/sessions'),
+  getSystemPerformance: () => request<SystemPerformanceMetrics>('/api/admin/system-performance', { cache: 'no-store' }),
   getRemoteAccessSettings: () =>
     request<{
       mode: 'SERVER_ONLY' | 'LOCAL_NETWORK' | 'ALL_ALLOWED';

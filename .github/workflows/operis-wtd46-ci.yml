@@ -36,6 +36,7 @@ jobs:
         shell: pwsh
         run: |
           node tests/ci/postgresql-only-contract.cjs
+          node tests/ci/system-performance-panel-contract.cjs
           node tests/verify-wtd58-backup-restore-gates.cjs
           node tests/ci/startup-postgresql-readiness-contract.cjs
           node tests/ci/tbldemirmas-db-outage-contract.cjs

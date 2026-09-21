@@ -31,6 +31,7 @@ jobs:
           node-version: "24.21.0"
       - run: npm ci --no-audit --no-fund
       - run: node tests/ci/settings-and-static-asset-regression.cjs
+      - run: node tests/ci/system-performance-panel-contract.cjs
       - run: npm run typecheck
       - run: npx vite build
       - run: node tests/ci/verify-frontend-css-build.cjs
