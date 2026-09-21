@@ -69,7 +69,10 @@ function readOnlyPermissions(source: UserPermissions): UserPermissions {
 
 const BRANCH_HEADER = 'x-operis-branch-code';
 
-export async function ensureBranchFoundation(): Promise<void> {
+let branchFoundationReady = false;
+let branchFoundationPromise: Promise<void> | null = null;
+
+async function ensureBranchFoundationCore(): Promise<void> {
   await prisma.branch.upsert({
     where: { code: '100' },
     update: { name: 'Merkez Şube', isHeadOffice: true, active: true },
@@ -250,6 +253,19 @@ export async function ensureBranchFoundation(): Promise<void> {
         },
       });
     }
+  }
+}
+
+export async function ensureBranchFoundation(): Promise<void> {
+  if (branchFoundationReady) return;
+  if (!branchFoundationPromise) {
+    branchFoundationPromise = ensureBranchFoundationCore();
+  }
+  try {
+    await branchFoundationPromise;
+    branchFoundationReady = true;
+  } finally {
+    branchFoundationPromise = null;
   }
 }
 
