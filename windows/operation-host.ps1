@@ -285,7 +285,7 @@ try {
     while (-not $process.HasExited) {
         foreach ($item in @(@{ Path = $stdoutFile; IsError = $false }, @{ Path = $stderrFile; IsError = $true })) {
             if (-not (Test-Path $item.Path)) { continue }
-            $lines = @(Get-Content $item.Path -ErrorAction SilentlyContinue)
+            $lines = @(Get-Content $item.Path -Encoding UTF8 -ErrorAction SilentlyContinue)
             $index = if ($item.IsError) { $stderrIndex } else { $stdoutIndex }
             while ($index -lt $lines.Count) {
                 $line = [string]$lines[$index]
@@ -306,7 +306,7 @@ try {
 
     foreach ($item in @(@{ Path = $stdoutFile; IsError = $false }, @{ Path = $stderrFile; IsError = $true })) {
         if (-not (Test-Path $item.Path)) { continue }
-        $lines = @(Get-Content $item.Path -ErrorAction SilentlyContinue)
+        $lines = @(Get-Content $item.Path -Encoding UTF8 -ErrorAction SilentlyContinue)
         $index = if ($item.IsError) { $stderrIndex } else { $stdoutIndex }
         while ($index -lt $lines.Count) {
             $line = [string]$lines[$index]
