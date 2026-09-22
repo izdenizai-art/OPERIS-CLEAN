@@ -36,8 +36,13 @@ function domainErrorCode(detail:string){
 }
 
 async function runPowerShell(script:string,timeoutMs=120_000):Promise<string>{
+  const utf8Script=[
+    "[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false)",
+    "$OutputEncoding=[System.Text.UTF8Encoding]::new($false)",
+    script,
+  ].join("\r\n");
   return new Promise((resolve,reject)=>{
-    execFile('powershell.exe',['-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-EncodedCommand',powershellEncoded(script)],
+    execFile('powershell.exe',['-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-EncodedCommand',powershellEncoded(utf8Script)],
       {windowsHide:true,timeout:timeoutMs,maxBuffer:32*1024*1024,encoding:'utf8'},(error,stdout,stderr)=>{
         if(error){
           const detail=String(stderr||error.message||'PowerShell sorgusu başarısız.').trim();
