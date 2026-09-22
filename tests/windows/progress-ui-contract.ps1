@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $hostScript = Join-Path $repo 'windows\operation-host.ps1'
 $uiScript = Join-Path $repo 'windows\progress-ui.ps1'
