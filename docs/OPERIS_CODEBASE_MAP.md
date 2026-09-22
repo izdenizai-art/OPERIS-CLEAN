@@ -128,7 +128,7 @@ Backend build zinciri:
 - `windows/postgresql-restore.ps1` / restore-test scriptleri: restore/validation akislarinin kaynagi.
 - Installer bundled PostgreSQL kaynagi `vendor/postgresql/` altindan paketlenir.
 
-Not: TESTSERVER kurulu payload'da `windows/server-runner.ps1` goruldu, ancak candidate branch GitHub fetch kontrolunde bu yol `NOT_FOUND` dondu. Bu dosya GitHub codebase parcasi kabul edilmez; kaynak/installer tarafinda ayrica kanitlanmadan uzerinde degisiklik yapilmaz.
+`windows/server-runner.ps1`: OPERIS runtime Scheduled Task runner'inin gerçek GitHub kaynak dosyasıdır. `windows/install-enterprise.ps1` içindeki `Install-Runner` bu dosyanın varlığını doğrular ve `C:\\ProgramData\\Operis\\windows\\server-runner.ps1` hedefine kopyalar. Runner artık installer içinde here-string olarak üretilmez. `installer/OPERIS.iss` repo ağacını recursive paketlediği için bu dosya Setup payload'ına dahil olur.
 
 ## 6. Test ve CI haritasi
 
@@ -149,6 +149,7 @@ Test kaynaklari:
 
 - `tests/integration/operis-integration-smoke.ps1`
 - `tests/load/operis-capacity.js`
+- `tests/windows/server-runner-source-contract.ps1`: runner'ın gerçek repo kaynağı olması ve installer tarafından kopyalanması sözleşmesi.
 
 Bir workflow'un dosyada bulunmasi veya gecmiste PASS olmasi, yeni HEAD icin otomatik PASS anlamina gelmez.
 
