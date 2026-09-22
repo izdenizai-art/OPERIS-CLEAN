@@ -164,7 +164,7 @@ function ldapSingleUserScript(
     "if($protocol -eq 'LDAP'){ $authType = $authType -bor [System.DirectoryServices.AuthenticationTypes]::Signing -bor [System.DirectoryServices.AuthenticationTypes]::Sealing }",
     "$root=New-Object System.DirectoryServices.DirectoryEntry($path,$username,$password,$authType)",
     "$null=$root.NativeObject",
-    "$escapedSam=$targetSam.Replace('\\','\\5c').Replace('*','\\2a').Replace('(','\\28').Replace(')','\\29').Replace([char]0,'\\00')",
+    "$escapedSam=$targetSam.Replace('\\','\\5c').Replace('*','\\2a').Replace('(','\\28').Replace(')','\\29').Replace(([string][char]0),'\\00')",
     "$searcher=New-Object System.DirectoryServices.DirectorySearcher($root)",
     "$searcher.PageSize=1",
     "$searcher.SizeLimit=1",
