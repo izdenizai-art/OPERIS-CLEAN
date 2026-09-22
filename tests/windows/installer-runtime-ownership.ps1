@@ -1,4 +1,4 @@
-$ErrorActionPreference='Stop'
+﻿$ErrorActionPreference='Stop'
 if ($env:GITHUB_ACTIONS -ne 'true') { throw 'Disposable Windows runner required.' }
 $repo=Resolve-Path (Join-Path $PSScriptRoot '..\..')
 $source=Join-Path $repo 'windows\install-enterprise.ps1'
