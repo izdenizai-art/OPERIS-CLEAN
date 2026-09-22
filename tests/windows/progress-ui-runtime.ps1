@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$EvidencePath = (Join-Path $env:TEMP 'progress-ui-evidence.json')
 )
 $ErrorActionPreference = 'Stop'
