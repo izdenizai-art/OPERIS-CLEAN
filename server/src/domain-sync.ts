@@ -61,6 +61,21 @@ function meaningfulDepartment(groups:string[],department:string){
 }
 async function settingsRow(){return prisma.appSettings.upsert({where:{id:1},update:{},create:{id:1}});}
 
+async function findExistingDomainUser(username:string, objectGuid:string){
+  const byUsername=await prisma.user.findUnique({where:{username}});
+  const guid=objectGuid.trim();
+  if(!guid)return byUsername;
+  const byGuid=await prisma.user.findFirst({where:{directorySource:'AD',directoryObjectGuid:guid}});
+  if(byUsername&&byGuid&&byUsername.id!==byGuid.id){
+    throw new DomainConnectionError(
+      'DC_DUPLICATE_IDENTITY',
+      'Active Directory kullanıcısı birden fazla OPERİS hesabıyla eşleşiyor.',
+      `username=${username}; objectGuid=${guid}`,
+    );
+  }
+  return byUsername??byGuid;
+}
+
 export async function getDomainSyncSettings(){
   const row=await settingsRow();
   return {
@@ -212,9 +227,9 @@ async function upsertDomainUserForLogin(ad:AdUser,helpDeskBranchCode:string){
   const directoryUserPrincipalName=String(ad.userPrincipalName||'').trim().slice(0,254);
   const candidateEmail=String(ad.email||'').trim().toLocaleLowerCase('tr-TR');
 
-  const existing=await prisma.user.findUnique({where:{username}});
+  const existing=await findExistingDomainUser(username,String(ad.objectGuid||''));
   const emailOwner=candidateEmail?await prisma.user.findFirst({where:{email:candidateEmail},select:{id:true,username:true}}):null;
-  const safeEmail=emailOwner&&emailOwner.username!==username?null:(candidateEmail||null);
+  const safeEmail=emailOwner&&emailOwner.id!==existing?.id?null:(candidateEmail||null);
 
   if(!existing){
     if(!ad.enabled)return null;
@@ -238,7 +253,7 @@ async function upsertDomainUserForLogin(ad:AdUser,helpDeskBranchCode:string){
   if(existing.directorySource!=='AD')return null;
 
   const user=await prisma.user.update({where:{id:existing.id},data:{
-    displayName,
+    username,displayName,
     email:safeEmail,
     department,
     title,
@@ -347,9 +362,9 @@ async function performDomainUsersSync():Promise<DomainSyncResult>{
     const title=String(ad.title||'').trim().slice(0,120);
     const directoryUserPrincipalName=String(ad.userPrincipalName||'').trim().slice(0,254);
     const candidateEmail=String(ad.email||'').trim().toLocaleLowerCase('tr-TR');
-    const existing=await prisma.user.findUnique({where:{username}});
+    const existing=await findExistingDomainUser(username,String(ad.objectGuid||''));
     const emailOwner=candidateEmail?await prisma.user.findFirst({where:{email:candidateEmail},select:{id:true,username:true}}):null;
-    const safeEmail=emailOwner&&emailOwner.username!==username?null:(candidateEmail||null);
+    const safeEmail=emailOwner&&emailOwner.id!==existing?.id?null:(candidateEmail||null);
     if(!existing){
       const passwordHash=await bcrypt.hash(crypto.randomUUID()+crypto.randomUUID(),12);
       const user=await prisma.user.create({data:{
@@ -385,7 +400,7 @@ async function performDomainUsersSync():Promise<DomainSyncResult>{
       track('directoryEnabled','DC Aktiflik',existing.directoryEnabled,Boolean(ad.enabled));
       track('directoryObjectGuid','DC Object GUID',existing.directoryObjectGuid,String(ad.objectGuid||''));
       await prisma.user.update({where:{id:existing.id},data:{
-        displayName,email:safeEmail,department,title,
+        username,displayName,email:safeEmail,department,title,
         active:Boolean(ad.enabled),directorySource:'AD',directoryGroups:groups,directoryUserPrincipalName,
         directoryEnabled:Boolean(ad.enabled),directoryObjectGuid:String(ad.objectGuid||''),directoryLastSyncAt:new Date()
       }});
