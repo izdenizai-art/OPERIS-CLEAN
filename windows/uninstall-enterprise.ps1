@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 $InstallRoot = Join-Path $env:ProgramData 'Operis'
 $ManagedPostgresRoot = Join-Path $env:ProgramData 'OperisPostgreSQL'
 $TaskNames = @('OperisEnterpriseServer','OperisEnterpriseDailyBackup')
