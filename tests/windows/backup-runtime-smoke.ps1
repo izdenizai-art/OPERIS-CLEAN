@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 
 $originalProgramData = $env:ProgramData
 $testRoot = Join-Path $env:RUNNER_TEMP "OperisBackupSmoke"
