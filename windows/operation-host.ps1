@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(Mandatory = $true)][string]$PayloadRoot,
     [ValidateSet('AUTO','INSTALL','UPDATE','REPAIR','REFRESH','UNINSTALL')][string]$OperationType = 'AUTO',
     [string]$CurrentVersion = '',
